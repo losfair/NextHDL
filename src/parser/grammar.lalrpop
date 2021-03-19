@@ -15,15 +15,15 @@ pub ModuleDef: ast::ModuleDef = {
 
 ModuleItem: ast::ModuleItem = {
   <x:FnDef> => ast::ModuleItem::Fn(x),
-  "extern" <x:SignalDef> ";" => ast::ModuleItem::ExternSignal(x),
+  "extern" "signal" <x:GenericDef> ";" => ast::ModuleItem::ExternSignal(x),
 };
 
 FnDef: ast::FnDef = {
   "fn" <name:Identifier> <meta:FnMeta> <specializations:MaybeFnSpecializations> => ast::FnDef { name, meta, specializations }
 };
 
-SignalDef: ast::SignalDef = {
-  "signal" <name:Identifier> ":" <ty:Type> <init_value:("=" <Expr>)?> => ast::SignalDef { name, ty, init_value },
+GenericDef: ast::GenericDef = {
+  <name:Identifier> <ty:(":" <Type>)?> <init_value:("=" <Expr>)?> => ast::GenericDef { name, ty, init_value },
 };
 
 MaybeFnSpecializations: Vec<ast::FnSpecialization> = {
@@ -36,7 +36,7 @@ MaybeFnSpecializations: Vec<ast::FnSpecialization> = {
 };
 
 FnSpecializationWhere: ast::FnSpecialization = {
-  "where" <e:Expr> <body:FnBody> => ast::FnSpecialization { where_expr: Some(e), body },
+  "where" <e:ExprTypeLevel> <body:FnBody> => ast::FnSpecialization { where_expr: Some(e), body },
 };
 
 FnSpecializationDefault: ast::FnSpecialization = {
@@ -44,7 +44,7 @@ FnSpecializationDefault: ast::FnSpecialization = {
 };
 
 FnBody: ast::FnBody = {
-  "{" "}" => ast::FnBody {},
+  "{" <body:Body> "}" => ast::FnBody { body },
 };
 
 Type: ast::Type = {
@@ -84,23 +84,77 @@ FnArg: ast::FnArg = {
 };
 
 ActualTyArgList: Vec<ast::Expr> = {
-  "<" <list:Comma<Expr>> ">" => list,
+  "<" <list:Comma<ExprTypeLevel>> ">" => list,
 };
 
-ActualArgList: Vec<ast::Expr> = {
-  "(" <list:Comma<Expr>> ")" => list,
+ActualArgList<I>: Vec<ast::Expr> = {
+  "(" <list:Comma<I>> ")" => list,
+};
+
+Block: ast::Block = {
+  "{" <args:FnArgList> "in" <body:Body> "}" => ast::Block { args, body },
+  "{" <body:Body> "}" => ast::Block { args: vec![], body },
+};
+
+Body: Vec<ast::Stmt> = {
+  Stmt*
+};
+
+Stmt: ast::Stmt = {
+  <v:StmtV> => ast::Stmt { v },
+};
+
+StmtV: ast::StmtV = {
+  "let" <def:GenericDef> ";" => ast::StmtV::Let { def },
+  "signal" <def:GenericDef> ";" => ast::StmtV::Signal { def },
+  "if" <e:Expr> "{" <if_body:Body> "}" => ast::StmtV::IfElse { condition: e, if_body, else_body: None },
+  "if" <e:Expr> "{" <if_body:Body> "}" "else" "{" <else_body:Body> "}" => ast::StmtV::IfElse {
+    condition: e,
+    if_body,
+    else_body: Some(else_body),
+  },
+  <left:Identifier> "=" <right:Expr> => ast::StmtV::Assign { left, right },
+  <e:Expr> ";" => ast::StmtV::Expr { e },
+  <e:Expr> <b:Block> ";"? => {
+    let mut e = e;
+    let b = ast::Expr { v: ast::ExprV::Block(Box::new(b)) };
+    if let ast::ExprV::Call { ref mut args, .. } = e.v {
+      args.push(b);
+      ast::StmtV::Expr { e }
+    } else {
+      ast::StmtV::Expr {
+        e: ast::Expr {
+          v: ast::ExprV::Call {
+            base: Box::new(e),
+            args: vec![b],
+          },
+        },
+      }
+    }
+  }
+}
+
+ExprBase<I>: ast::Expr = {
+  <v:ExprBaseV<I>> => ast::Expr { v }
+};
+
+ExprBaseV<I>: ast::ExprV = {
+  <l:Literal> => ast::ExprV::Lit(l),
+  <id:Identifier> => ast::ExprV::Ident(id),
+  <base:I> "." <id:Identifier> => ast::ExprV::Dot { base: Box::new(base), id },
+  <base:I> <tyargs:ActualTyArgList> => ast::ExprV::Specialize { base: Box::new(base), tyargs },
+  <base:I> <args:ActualArgList<I>> => {
+    ast::ExprV::Call { base: Box::new(base), args }
+  },
+  <b:Block> => ast::ExprV::Block(Box::new(b)),
+};
+
+ExprTypeLevel: ast::Expr = {
+  ExprBase<ExprTypeLevel>,
 };
 
 Expr: ast::Expr = {
-  <v:ExprV> => ast::Expr { v }
-};
-
-ExprV: ast::ExprV = {
-  <l:Literal> => ast::ExprV::Lit(l),
-  <id:Identifier> => ast::ExprV::Ident(id),
-  <base:Expr> "." <id:Identifier> => ast::ExprV::Dot { base: Box::new(base), id },
-  <base:Expr> <tyargs:ActualTyArgList> => ast::ExprV::Specialize { base: Box::new(base), tyargs },
-  <base:Expr> <args:ActualArgList> => ast::ExprV::Call { base: Box::new(base), args },
+  ExprBase<Expr>,
 };
 
 Literal: ast::Literal = {

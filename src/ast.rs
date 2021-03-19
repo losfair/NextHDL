@@ -8,13 +8,13 @@ pub struct ModuleDef {
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum ModuleItem {
   Fn(FnDef),
-  ExternSignal(SignalDef),
+  ExternSignal(GenericDef),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct SignalDef {
+pub struct GenericDef {
   pub name: Identifier,
-  pub ty: Type,
+  pub ty: Option<Type>,
   pub init_value: Option<Expr>,
 }
 
@@ -32,7 +32,9 @@ pub struct FnSpecialization {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct FnBody {}
+pub struct FnBody {
+  pub body: Vec<Stmt>,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct FnMeta {
@@ -65,6 +67,26 @@ pub struct FnArg {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct Stmt {
+  pub v: StmtV,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum StmtV {
+  Let { def: GenericDef },
+  Signal { def: GenericDef },
+  IfElse { condition: Expr, if_body: Vec<Stmt>, else_body: Option<Vec<Stmt>> },
+  Assign { left: Identifier, right: Expr },
+  Expr { e: Expr },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct Block {
+  pub args: Vec<FnArg>,
+  pub body: Vec<Stmt>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Expr {
   pub v: ExprV,
 }
@@ -76,6 +98,7 @@ pub enum ExprV {
   Dot { base: Box<Expr>, id: Identifier },
   Specialize { base: Box<Expr>, tyargs: Vec<Expr> },
   Call { base: Box<Expr>, args: Vec<Expr> },
+  Block(Box<Block>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
