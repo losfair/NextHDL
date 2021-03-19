@@ -1,0 +1,7 @@
+fn fma(a: uint<32>, b: uint<32>, c: uint<32>, callback: fn (_: u32)) {
+  let mul_out = a.mul(b);
+  fork {
+    let add_out = mul_out.add(c);
+    callback(add_out);
+  }
+}

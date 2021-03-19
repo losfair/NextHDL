@@ -1,0 +1,66 @@
+fn leb128_decode_statem(
+  next_byte: fn (_: fn (_: uint<8>)),
+  completion: fn (_: uint<32>, ok: uint<1>),
+) {
+  leb128_decode_statem_inner<5, 0>(next_byte, completion, empty);
+}
+
+fn leb128_decode_statem_inner<N: Int, M: Int>(
+  next_byte: fn (_: fn (_: uint<8>)),
+  completion: fn (_: uint<32>, ok: uint<1>),
+  buf: uint<M>,
+) where N.eq(0) {
+  fork {
+    completion(undefined, 0);
+  }
+} default {
+  next_byte {
+    (byte: uint<8>) in
+
+    let buf = byte.slice<6, 0>().append(buf);
+    if byte.get(7) {
+      leb128_decode_statem_inner<N.sub(1), M.add(7)>(next_byte, completion, buf);
+    } else {
+      fork {
+        completion(buf.slice<31, 0>(), 1);
+      }
+    }
+  }
+}
+
+fn top_level(
+  valid: signal_in<uint<1>>,
+  byte_input: signal_in<uint<32>>,
+  ready: signal_out<uint<1>>,
+  output: signal_out<uint<32>>,
+  error: signal_out<uint<1>>,
+) {
+  fork {
+    ready.write_priority<0>(0);
+    fork(self);
+  }
+
+  leb128_decode_statem(
+    {
+      (cb: fn (_: uint<8>)) in
+      let me = self;
+      if valid.read() {
+        cb(byte_input.read());
+      } else {
+        fork {
+          me(cb);
+        }
+      }
+    },
+    {
+      (value: uint<32>, ok: uint<1>) in
+      ready.write_priority<1>(1);
+      if ok {
+        output.write(value);
+        error.write(0);
+      } else {
+        error.write(1);
+      }
+    }
+  );
+}

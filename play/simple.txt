@@ -1,0 +1,9 @@
+extern signal IRAM_ADDR: uint<32>;
+extern signal IRAM_DATA: uint<32>;
+
+fn iram_issue<T: Nat>(addr: uint<32>, cb: fn (data: uint<32>))
+  where T.eq(1) {
+
+} default {
+  
+}
