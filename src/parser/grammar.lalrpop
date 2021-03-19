@@ -1,0 +1,128 @@
+use crate::ast;
+use crate::parser::error::LocalParseError;
+use lalrpop_util::ParseError;
+use crate::parser::grammar_helper as helper;
+
+grammar;
+
+extern {
+  type Error = LocalParseError;
+}
+
+pub ModuleDef: ast::ModuleDef = {
+  <items:ModuleItem*> => ast::ModuleDef { items },
+};
+
+ModuleItem: ast::ModuleItem = {
+  <x:FnDef> => ast::ModuleItem::Fn(x),
+  "extern" <x:SignalDef> ";" => ast::ModuleItem::ExternSignal(x),
+};
+
+FnDef: ast::FnDef = {
+  "fn" <name:Identifier> <meta:FnMeta> <specializations:MaybeFnSpecializations> => ast::FnDef { name, meta, specializations }
+};
+
+SignalDef: ast::SignalDef = {
+  "signal" <name:Identifier> ":" <ty:Type> <init_value:("=" <Expr>)?> => ast::SignalDef { name, ty, init_value },
+};
+
+MaybeFnSpecializations: Vec<ast::FnSpecialization> = {
+  <w:FnSpecializationWhere*> <d:FnSpecializationDefault> => {
+    let mut w = w;
+    w.push(d);
+    w
+  },
+  <body:FnBody> => vec![ast::FnSpecialization { where_expr: None, body }],
+};
+
+FnSpecializationWhere: ast::FnSpecialization = {
+  "where" <e:Expr> <body:FnBody> => ast::FnSpecialization { where_expr: Some(e), body },
+};
+
+FnSpecializationDefault: ast::FnSpecialization = {
+  "default" <body:FnBody> => ast::FnSpecialization { where_expr: None, body },
+};
+
+FnBody: ast::FnBody = {
+  "{" "}" => ast::FnBody {},
+};
+
+Type: ast::Type = {
+  "fn" <meta:FnMeta> => ast::Type { v: ast::TypeV::Fn { meta } },
+  <name:Identifier> <tyargs:ActualTyArgList?> => ast::Type { v: ast::TypeV::Named {
+    name,
+    tyargs: tyargs.unwrap_or_else(|| vec![]),
+  } },
+};
+
+FnMeta: ast::FnMeta = {
+  <tyargs:FnTyArgList?> <args:FnArgList> <ret:FnRet?> => ast::FnMeta {
+    tyargs: tyargs.unwrap_or_else(|| vec![]),
+    args,
+    ret,
+  },
+};
+
+FnRet: Box<ast::Type> = {
+  "->" <ty:Type> => Box::new(ty),
+};
+
+FnTyArgList: Vec<ast::FnTyArg> = {
+  "<" <list:Comma<FnTyArg>> ">" => list,
+};
+
+FnTyArg: ast::FnTyArg = {
+  <name:Identifier> ":" <kind:Type> => ast::FnTyArg { name, kind },
+};
+
+FnArgList: Vec<ast::FnArg> = {
+  "(" <list:Comma<FnArg>> ")" => list,
+};
+
+FnArg: ast::FnArg = {
+  <name:Identifier> ":" <ty:Type> => ast::FnArg { name, ty },
+};
+
+ActualTyArgList: Vec<ast::Expr> = {
+  "<" <list:Comma<Expr>> ">" => list,
+};
+
+ActualArgList: Vec<ast::Expr> = {
+  "(" <list:Comma<Expr>> ")" => list,
+};
+
+Expr: ast::Expr = {
+  <v:ExprV> => ast::Expr { v }
+};
+
+ExprV: ast::ExprV = {
+  <l:Literal> => ast::ExprV::Lit(l),
+  <id:Identifier> => ast::ExprV::Ident(id),
+  <base:Expr> "." <id:Identifier> => ast::ExprV::Dot { base: Box::new(base), id },
+  <base:Expr> <tyargs:ActualTyArgList> => ast::ExprV::Specialize { base: Box::new(base), tyargs },
+  <base:Expr> <args:ActualArgList> => ast::ExprV::Call { base: Box::new(base), args },
+};
+
+Literal: ast::Literal = {
+  <s:r"[0-9]+"> =>? s.parse().map(|x| ast::Literal { v: ast::LiteralV::Uint(x) }).map_err(|_| ParseError::User {
+    error: LocalParseError::InvalidLiteral,
+  }),
+  <s:r"0x[0-9a-fA-F]+"> =>? helper::parse_radix_prefixed_str(s, "0x", 16),
+  <s:r"0o[0-9a-fA-F]+"> =>? helper::parse_radix_prefixed_str(s, "0o", 8),
+  <s:r"0b[0-9a-fA-F]+"> =>? helper::parse_radix_prefixed_str(s, "0b", 2),
+};
+
+Identifier: ast::Identifier = {
+  <s:r"[a-zA-Z_][0-9a-zA-Z_]*"> => ast::Identifier(s.to_string()),
+};
+
+Comma<T>: Vec<T> = { 
+  <v:(<T> ",")*> <e:T?> => match e {
+    None => v,
+    Some(e) => {
+      let mut v = v;
+      v.push(e);
+      v
+    }
+  }
+};
