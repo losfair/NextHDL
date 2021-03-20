@@ -15,15 +15,16 @@ pub ModuleDef: ast::ModuleDef = {
 
 ModuleItem: ast::ModuleItem = {
   <x:FnDef> => ast::ModuleItem::Fn(x),
-  "extern" "signal" <x:GenericDef> ";" => ast::ModuleItem::ExternSignal(x),
+  Token<"extern"> Token<"signal"> <x:GenericDef> Token<";"> => ast::ModuleItem::ExternSignal(x),
+  Token<"import"> <path:StringLit> Token<"as"> <as_name:Identifier> Token<";"> => ast::ModuleItem::Import(ast::ImportItem { path, as_name }),
 };
 
 FnDef: ast::FnDef = {
-  "fn" <name:Identifier> <meta:FnMeta> <specializations:MaybeFnSpecializations> => ast::FnDef { name, meta, specializations }
+  Token<"fn"> <name:Identifier> <meta:FnMeta> <specializations:MaybeFnSpecializations> => ast::FnDef { name, meta, specializations }
 };
 
 GenericDef: ast::GenericDef = {
-  <name:Identifier> <ty:(":" <Type>)?> <init_value:("=" <Expr>)?> => ast::GenericDef { name, ty, init_value },
+  <name:Identifier> <ty:(Token<":"> <Type>)?> <init_value:(Token<"="> <Expr>)?> => ast::GenericDef { name, ty, init_value },
 };
 
 MaybeFnSpecializations: Vec<ast::FnSpecialization> = {
@@ -36,22 +37,21 @@ MaybeFnSpecializations: Vec<ast::FnSpecialization> = {
 };
 
 FnSpecializationWhere: ast::FnSpecialization = {
-  "where" <e:ExprTypeLevel> <body:FnBody> => ast::FnSpecialization { where_expr: Some(e), body },
+  Token<"where"> <e:ExprTypeLevel> <body:FnBody> => ast::FnSpecialization { where_expr: Some(e), body },
 };
 
 FnSpecializationDefault: ast::FnSpecialization = {
-  "default" <body:FnBody> => ast::FnSpecialization { where_expr: None, body },
+  Token<"default"> <body:FnBody> => ast::FnSpecialization { where_expr: None, body },
 };
 
 FnBody: ast::FnBody = {
-  "{" <body:Body> "}" => ast::FnBody { body },
+  Token<"{"> <body:Body> Token<"}"> => ast::FnBody { body },
 };
 
 Type: ast::Type = {
-  "fn" <meta:FnMeta> => ast::Type { v: ast::TypeV::Fn { meta } },
-  <name:Identifier> <tyargs:ActualTyArgList?> => ast::Type { v: ast::TypeV::Named {
-    name,
-    tyargs: tyargs.unwrap_or_else(|| vec![]),
+  Token<"fn"> <meta:FnMeta> => ast::Type { v: ast::TypeV::Fn { meta } },
+  <tyexp:Expr> => ast::Type { v: ast::TypeV::Dynamic {
+    tyexp,
   } },
 };
 
@@ -64,36 +64,36 @@ FnMeta: ast::FnMeta = {
 };
 
 FnRet: Box<ast::Type> = {
-  "->" <ty:Type> => Box::new(ty),
+  Token<"->"> <ty:Type> => Box::new(ty),
 };
 
 FnTyArgList: Vec<ast::FnTyArg> = {
-  "<" <list:Comma<FnTyArg>> ">" => list,
+  Token<"<"> <list:Comma<FnTyArg>> Token<">"> => list,
 };
 
 FnTyArg: ast::FnTyArg = {
-  <name:Identifier> ":" <kind:Type> => ast::FnTyArg { name, kind },
+  <name:Identifier> Token<":"> <kind:Type> => ast::FnTyArg { name, kind },
 };
 
 FnArgList: Vec<ast::FnArg> = {
-  "(" <list:Comma<FnArg>> ")" => list,
+  Token<"("> <list:Comma<FnArg>> Token<")"> => list,
 };
 
 FnArg: ast::FnArg = {
-  <name:Identifier> ":" <ty:Type> => ast::FnArg { name, ty },
+  <name:Identifier> Token<":"> <ty:Type> => ast::FnArg { name, ty },
 };
 
 ActualTyArgList: Vec<ast::Expr> = {
-  "<" <list:Comma<ExprTypeLevel>> ">" => list,
+  Token<"<"> <list:Comma<ExprTypeLevel>> Token<">"> => list,
 };
 
 ActualArgList<I>: Vec<ast::Expr> = {
-  "(" <list:Comma<I>> ")" => list,
+  Token<"("> <list:Comma<I>> Token<")"> => list,
 };
 
 Block: ast::Block = {
-  "{" <args:FnArgList> "in" <body:Body> "}" => ast::Block { args, body },
-  "{" <body:Body> "}" => ast::Block { args: vec![], body },
+  Token<"{"> <args:FnArgList> Token<"in"> <body:Body> Token<"}"> => ast::Block { args, body },
+  Token<"{"> <body:Body> Token<"}"> => ast::Block { args: vec![], body },
 };
 
 Body: Vec<ast::Stmt> = {
@@ -105,10 +105,10 @@ Stmt: ast::Stmt = {
 };
 
 StmtV: ast::StmtV = {
-  "let" <def:GenericDef> ";" => ast::StmtV::Let { def },
-  "signal" <def:GenericDef> ";" => ast::StmtV::Signal { def },
-  "if" <e:Expr> "{" <if_body:Body> "}" => ast::StmtV::IfElse { condition: e, if_body, else_body: None },
-  "if" <e:Expr> "{" <if_body:Body> "}" "else" "{" <else_body:Body> "}" => ast::StmtV::IfElse {
+  Token<"let"> <def:GenericDef> Token<";"> => ast::StmtV::Let { def },
+  Token<"signal"> <def:GenericDef> Token<";"> => ast::StmtV::Signal { def },
+  Token<"if"> <e:Expr> Token<"{"> <if_body:Body> Token<"}"> => ast::StmtV::IfElse { condition: e, if_body, else_body: None },
+  Token<"if"> <e:Expr> Token<"{"> <if_body:Body> Token<"}"> Token<"else"> Token<"{"> <else_body:Body> Token<"}"> => ast::StmtV::IfElse {
     condition: e,
     if_body,
     else_body: Some(else_body),
@@ -158,16 +158,23 @@ Expr: ast::Expr = {
 };
 
 Literal: ast::Literal = {
-  <s:r"[0-9]+"> =>? s.parse().map(|x| ast::Literal { v: ast::LiteralV::Uint(x) }).map_err(|_| ParseError::User {
+  <s:Token<r"[0-9]+">> =>? s.parse().map(|x| ast::Literal { v: ast::LiteralV::Uint(x) }).map_err(|_| ParseError::User {
     error: LocalParseError::InvalidLiteral,
   }),
-  <s:r"0x[0-9a-fA-F]+"> =>? helper::parse_radix_prefixed_str(s, "0x", 16),
-  <s:r"0o[0-9a-fA-F]+"> =>? helper::parse_radix_prefixed_str(s, "0o", 8),
-  <s:r"0b[0-9a-fA-F]+"> =>? helper::parse_radix_prefixed_str(s, "0b", 2),
+  <s:Token<r"0x[0-9a-fA-F]+">> =>? helper::parse_radix_prefixed_str(s, "0x", 16),
+  <s:Token<r"0o[0-9a-fA-F]+">> =>? helper::parse_radix_prefixed_str(s, "0o", 8),
+  <s:Token<r"0b[0-9a-fA-F]+">> =>? helper::parse_radix_prefixed_str(s, "0b", 2),
+};
+
+StringLit: String = {
+  <s:Token<r#""(\\.|.)*""#>> =>? serde_json::from_str::<String>(s)
+    .map_err(|_| ParseError::User {
+      error: LocalParseError::InvalidLiteral,
+    }),
 };
 
 Identifier: ast::Identifier = {
-  <s:r"[a-zA-Z_][0-9a-zA-Z_]*"> => ast::Identifier(s.to_string()),
+  <s:Token<r"[a-zA-Z_][0-9a-zA-Z_]*">> => ast::Identifier(s.to_string()),
 };
 
 Comma<T>: Vec<T> = { 
@@ -179,4 +186,13 @@ Comma<T>: Vec<T> = {
       v
     }
   }
+};
+
+Token<I>: I = {
+  <s:I> <c:Comment?> => s,
+};
+
+Comment: () = {
+  r"//[^\n\r]*[\n\r]*" => { },
+  r"/\*([^\*]*\*+[^\*/])*([^\*]*\*+|[^\*])*\*/" => { },
 };

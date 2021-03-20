@@ -6,9 +6,21 @@ pub struct ModuleDef {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct Comment {
+  pub content: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum ModuleItem {
+  Import(ImportItem),
   Fn(FnDef),
   ExternSignal(GenericDef),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct ImportItem {
+  pub path: String,
+  pub as_name: Identifier,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -51,7 +63,7 @@ pub struct Type {
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum TypeV {
   Fn { meta: FnMeta },
-  Named { name: Identifier, tyargs: Vec<Expr> },
+  Dynamic { tyexp: Expr },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
