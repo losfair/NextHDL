@@ -10,7 +10,7 @@ extern {
 }
 
 pub ModuleDef: ast::ModuleDef = {
-  <items:ModuleItem*> => ast::ModuleDef { items },
+  <c:Comment*> <items:ModuleItem*> => ast::ModuleDef { items },
 };
 
 ModuleItem: ast::ModuleItem = {
@@ -189,7 +189,7 @@ Comma<T>: Vec<T> = {
 };
 
 Token<I>: I = {
-  <s:I> <c:Comment?> => s,
+  <s:I> <c:Comment*> => s,
 };
 
 Comment: () = {
