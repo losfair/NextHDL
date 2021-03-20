@@ -1,13 +1,15 @@
+use std::sync::Arc;
+
 use num_bigint::BigUint;
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct ModuleDef {
-  pub items: Vec<ModuleItem>,
+  pub items: Arc<[ModuleItem]>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Comment {
-  pub content: String,
+  pub content: Arc<str>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -19,7 +21,7 @@ pub enum ModuleItem {
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct ImportItem {
-  pub path: String,
+  pub path: Arc<str>,
   pub as_name: Identifier,
 }
 
@@ -34,7 +36,7 @@ pub struct GenericDef {
 pub struct FnDef {
   pub name: Identifier,
   pub meta: FnMeta,
-  pub specializations: Vec<FnSpecialization>,
+  pub specializations: Arc<[FnSpecialization]>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -45,14 +47,14 @@ pub struct FnSpecialization {
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct FnBody {
-  pub body: Vec<Stmt>,
+  pub body: Arc<[Stmt]>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct FnMeta {
-  pub tyargs: Vec<FnTyArg>,
-  pub args: Vec<FnArg>,
-  pub ret: Option<Box<Type>>,
+  pub tyargs: Arc<[FnTyArg]>,
+  pub args: Arc<[FnArg]>,
+  pub ret: Option<Arc<Type>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -85,17 +87,30 @@ pub struct Stmt {
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum StmtV {
-  Let { def: GenericDef },
-  Signal { def: GenericDef },
-  IfElse { condition: Expr, if_body: Vec<Stmt>, else_body: Option<Vec<Stmt>> },
-  Assign { left: Identifier, right: Expr },
-  Expr { e: Expr },
+  Let {
+    def: GenericDef,
+  },
+  Signal {
+    def: GenericDef,
+  },
+  IfElse {
+    condition: Expr,
+    if_body: Arc<[Stmt]>,
+    else_body: Option<Arc<[Stmt]>>,
+  },
+  Assign {
+    left: Identifier,
+    right: Expr,
+  },
+  Expr {
+    e: Expr,
+  },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Block {
-  pub args: Vec<FnArg>,
-  pub body: Vec<Stmt>,
+  pub args: Arc<[FnArg]>,
+  pub body: Arc<[Stmt]>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -107,10 +122,19 @@ pub struct Expr {
 pub enum ExprV {
   Lit(Literal),
   Ident(Identifier),
-  Dot { base: Box<Expr>, id: Identifier },
-  Specialize { base: Box<Expr>, tyargs: Vec<Expr> },
-  Call { base: Box<Expr>, args: Vec<Expr> },
-  Block(Box<Block>),
+  Dot {
+    base: Arc<Expr>,
+    id: Identifier,
+  },
+  Specialize {
+    base: Arc<Expr>,
+    tyargs: Arc<[Expr]>,
+  },
+  Call {
+    base: Arc<Expr>,
+    args: Arc<[Expr]>,
+  },
+  Block(Arc<Block>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -124,4 +148,4 @@ pub enum LiteralV {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct Identifier(pub String);
+pub struct Identifier(pub Arc<str>);

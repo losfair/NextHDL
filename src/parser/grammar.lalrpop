@@ -2,15 +2,18 @@ use crate::ast;
 use crate::parser::error::LocalParseError;
 use lalrpop_util::ParseError;
 use crate::parser::grammar_helper as helper;
+use crate::parser::state::State;
+use std::sync::Arc;
+use crate::util::{ArcSliceExt, mk_arc_slice};
 
-grammar;
+grammar(state: &mut State);
 
 extern {
   type Error = LocalParseError;
 }
 
 pub ModuleDef: ast::ModuleDef = {
-  <c:Comment*> <items:ModuleItem*> => ast::ModuleDef { items },
+  <c:Comment*> <items:ModuleItem*> => ast::ModuleDef { items: mk_arc_slice(items.into_iter()) },
 };
 
 ModuleItem: ast::ModuleItem = {
@@ -27,13 +30,11 @@ GenericDef: ast::GenericDef = {
   <name:Identifier> <ty:(Token<":"> <Type>)?> <init_value:(Token<"="> <Expr>)?> => ast::GenericDef { name, ty, init_value },
 };
 
-MaybeFnSpecializations: Vec<ast::FnSpecialization> = {
+MaybeFnSpecializations: Arc<[ast::FnSpecialization]> = {
   <w:FnSpecializationWhere*> <d:FnSpecializationDefault> => {
-    let mut w = w;
-    w.push(d);
-    w
+    mk_arc_slice(w.into_iter().chain(std::iter::once(d)))
   },
-  <body:FnBody> => vec![ast::FnSpecialization { where_expr: None, body }],
+  <body:FnBody> => mk_arc_slice(std::iter::once(ast::FnSpecialization { where_expr: None, body })),
 };
 
 FnSpecializationWhere: ast::FnSpecialization = {
@@ -57,14 +58,14 @@ Type: ast::Type = {
 
 FnMeta: ast::FnMeta = {
   <tyargs:FnTyArgList?> <args:FnArgList> <ret:FnRet?> => ast::FnMeta {
-    tyargs: tyargs.unwrap_or_else(|| vec![]),
-    args,
+    tyargs: mk_arc_slice(tyargs.unwrap_or_else(|| vec![]).into_iter()),
+    args: mk_arc_slice(args.into_iter()),
     ret,
   },
 };
 
-FnRet: Box<ast::Type> = {
-  Token<"->"> <ty:Type> => Box::new(ty),
+FnRet: Arc<ast::Type> = {
+  Token<"->"> <ty:Type> => Arc::new(ty),
 };
 
 FnTyArgList: Vec<ast::FnTyArg> = {
@@ -92,12 +93,12 @@ ActualArgList<I>: Vec<ast::Expr> = {
 };
 
 Block: ast::Block = {
-  Token<"{"> <args:FnArgList> Token<"in"> <body:Body> Token<"}"> => ast::Block { args, body },
-  Token<"{"> <body:Body> Token<"}"> => ast::Block { args: vec![], body },
+  Token<"{"> <args:FnArgList> Token<"in"> <body:Body> Token<"}"> => ast::Block { args: mk_arc_slice(args.into_iter()), body },
+  Token<"{"> <body:Body> Token<"}"> => ast::Block { args: mk_arc_slice(std::iter::empty()), body },
 };
 
-Body: Vec<ast::Stmt> = {
-  Stmt*
+Body: Arc<[ast::Stmt]> = {
+  <v:Stmt*> => mk_arc_slice(v.into_iter()),
 };
 
 Stmt: ast::Stmt = {
@@ -117,16 +118,16 @@ StmtV: ast::StmtV = {
   <e:Expr> ";" => ast::StmtV::Expr { e },
   <e:Expr> <b:Block> ";"? => {
     let mut e = e;
-    let b = ast::Expr { v: ast::ExprV::Block(Box::new(b)) };
+    let b = ast::Expr { v: ast::ExprV::Block(Arc::new(b)) };
     if let ast::ExprV::Call { ref mut args, .. } = e.v {
-      args.push(b);
+      *args = mk_arc_slice(args.take_all().chain(std::iter::once(b)));
       ast::StmtV::Expr { e }
     } else {
       ast::StmtV::Expr {
         e: ast::Expr {
           v: ast::ExprV::Call {
-            base: Box::new(e),
-            args: vec![b],
+            base: Arc::new(e),
+            args: mk_arc_slice(std::iter::once(b)),
           },
         },
       }
@@ -141,12 +142,12 @@ ExprBase<I>: ast::Expr = {
 ExprBaseV<I>: ast::ExprV = {
   <l:Literal> => ast::ExprV::Lit(l),
   <id:Identifier> => ast::ExprV::Ident(id),
-  <base:I> "." <id:Identifier> => ast::ExprV::Dot { base: Box::new(base), id },
-  <base:I> <tyargs:ActualTyArgList> => ast::ExprV::Specialize { base: Box::new(base), tyargs },
+  <base:I> "." <id:Identifier> => ast::ExprV::Dot { base: Arc::new(base), id },
+  <base:I> <tyargs:ActualTyArgList> => ast::ExprV::Specialize { base: Arc::new(base), tyargs: mk_arc_slice(tyargs.into_iter()) },
   <base:I> <args:ActualArgList<I>> => {
-    ast::ExprV::Call { base: Box::new(base), args }
+    ast::ExprV::Call { base: Arc::new(base), args: mk_arc_slice(args.into_iter()) }
   },
-  <b:Block> => ast::ExprV::Block(Box::new(b)),
+  <b:Block> => ast::ExprV::Block(Arc::new(b)),
 };
 
 ExprTypeLevel: ast::Expr = {
@@ -166,15 +167,16 @@ Literal: ast::Literal = {
   <s:Token<r"0b[0-9a-fA-F]+">> =>? helper::parse_radix_prefixed_str(s, "0b", 2),
 };
 
-StringLit: String = {
+StringLit: Arc<str> = {
   <s:Token<r#""(\\.|.)*""#>> =>? serde_json::from_str::<String>(s)
+    .map(|x| state.get_string(&x))
     .map_err(|_| ParseError::User {
       error: LocalParseError::InvalidLiteral,
     }),
 };
 
 Identifier: ast::Identifier = {
-  <s:Token<r"[a-zA-Z_][0-9a-zA-Z_]*">> => ast::Identifier(s.to_string()),
+  <s:Token<r"[a-zA-Z_][0-9a-zA-Z_]*">> => ast::Identifier(state.get_string(s)),
 };
 
 Comma<T>: Vec<T> = { 
