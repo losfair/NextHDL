@@ -72,6 +72,7 @@ pub enum TypeV {
 pub struct FnTyArg {
   pub name: Identifier,
   pub kind: Type,
+  pub default_value: Option<Expr>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -128,13 +129,19 @@ pub enum ExprV {
   },
   Specialize {
     base: Arc<Expr>,
-    tyargs: Arc<[Expr]>,
+    tyargs: Arc<[TypeAssign]>,
   },
   Call {
     base: Arc<Expr>,
     args: Arc<[Expr]>,
   },
   Block(Arc<Block>),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct TypeAssign {
+  pub ty: Option<Identifier>,
+  pub e: Expr,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]

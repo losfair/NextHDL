@@ -58,8 +58,8 @@ Type: ast::Type = {
 
 FnMeta: ast::FnMeta = {
   <tyargs:FnTyArgList?> <args:FnArgList> <ret:FnRet?> => ast::FnMeta {
-    tyargs: mk_arc_slice(tyargs.unwrap_or_else(|| vec![]).into_iter()),
-    args: mk_arc_slice(args.into_iter()),
+    tyargs: tyargs.unwrap_or_else(|| Arc::new([])),
+    args,
     ret,
   },
 };
@@ -68,15 +68,15 @@ FnRet: Arc<ast::Type> = {
   Token<"->"> <ty:Type> => Arc::new(ty),
 };
 
-FnTyArgList: Vec<ast::FnTyArg> = {
+FnTyArgList: Arc<[ast::FnTyArg]> = {
   Token<"<"> <list:Comma<FnTyArg>> Token<">"> => list,
 };
 
 FnTyArg: ast::FnTyArg = {
-  <name:Identifier> Token<":"> <kind:Type> => ast::FnTyArg { name, kind },
+  <name:Identifier> Token<":"> <kind:Type> <default_value:(Token<"="> <ExprTypeLevel>)?> => ast::FnTyArg { name, kind, default_value },
 };
 
-FnArgList: Vec<ast::FnArg> = {
+FnArgList: Arc<[ast::FnArg]> = {
   Token<"("> <list:Comma<FnArg>> Token<")"> => list,
 };
 
@@ -84,16 +84,21 @@ FnArg: ast::FnArg = {
   <name:Identifier> Token<":"> <ty:Type> => ast::FnArg { name, ty },
 };
 
-ActualTyArgList: Vec<ast::Expr> = {
-  Token<"<"> <list:Comma<ExprTypeLevel>> Token<">"> => list,
+ActualTyArgList: Arc<[ast::TypeAssign]> = {
+  Token<"<"> <list:Comma<TypeAssign>> Token<">"> => list,
 };
 
-ActualArgList<I>: Vec<ast::Expr> = {
+TypeAssign: ast::TypeAssign = {
+  <e:ExprTypeLevel> => ast::TypeAssign { ty: None, e },
+  <ty:Identifier> Token<"="> <e:ExprTypeLevel> => ast::TypeAssign { ty: Some(ty), e },
+};
+
+ActualArgList<I>: Arc<[ast::Expr]> = {
   Token<"("> <list:Comma<I>> Token<")"> => list,
 };
 
 Block: ast::Block = {
-  Token<"{"> <args:FnArgList> Token<"in"> <body:Body> Token<"}"> => ast::Block { args: mk_arc_slice(args.into_iter()), body },
+  Token<"{"> <args:FnArgList> Token<"in"> <body:Body> Token<"}"> => ast::Block { args, body },
   Token<"{"> <body:Body> Token<"}"> => ast::Block { args: mk_arc_slice(std::iter::empty()), body },
 };
 
@@ -114,10 +119,9 @@ StmtV: ast::StmtV = {
     if_body,
     else_body: Some(else_body),
   },
-  <left:Identifier> "=" <right:Expr> => ast::StmtV::Assign { left, right },
-  <e:Expr> ";" => ast::StmtV::Expr { e },
-  <e:Expr> <b:Block> ";"? => {
-    let mut e = e;
+  <left:Identifier> Token<"="> <right:Expr> => ast::StmtV::Assign { left, right },
+  <e:Expr> Token<";"> => ast::StmtV::Expr { e },
+  <mut e:Expr> <b:Block> Token<";">? => {
     let b = ast::Expr { v: ast::ExprV::Block(Arc::new(b)) };
     if let ast::ExprV::Call { ref mut args, .. } = e.v {
       *args = mk_arc_slice(args.take_all().chain(std::iter::once(b)));
@@ -142,10 +146,10 @@ ExprBase<I>: ast::Expr = {
 ExprBaseV<I>: ast::ExprV = {
   <l:Literal> => ast::ExprV::Lit(l),
   <id:Identifier> => ast::ExprV::Ident(id),
-  <base:I> "." <id:Identifier> => ast::ExprV::Dot { base: Arc::new(base), id },
-  <base:I> <tyargs:ActualTyArgList> => ast::ExprV::Specialize { base: Arc::new(base), tyargs: mk_arc_slice(tyargs.into_iter()) },
+  <base:I> Token<"."> <id:Identifier> => ast::ExprV::Dot { base: Arc::new(base), id },
+  <base:I> <tyargs:ActualTyArgList> => ast::ExprV::Specialize { base: Arc::new(base), tyargs },
   <base:I> <args:ActualArgList<I>> => {
-    ast::ExprV::Call { base: Arc::new(base), args: mk_arc_slice(args.into_iter()) }
+    ast::ExprV::Call { base: Arc::new(base), args }
   },
   <b:Block> => ast::ExprV::Block(Arc::new(b)),
 };
@@ -179,14 +183,10 @@ Identifier: ast::Identifier = {
   <s:Token<r"[a-zA-Z_][0-9a-zA-Z_]*">> => ast::Identifier(state.get_string(s)),
 };
 
-Comma<T>: Vec<T> = { 
-  <v:(<T> ",")*> <e:T?> => match e {
-    None => v,
-    Some(e) => {
-      let mut v = v;
-      v.push(e);
-      v
-    }
+Comma<T>: Arc<[T]> = { 
+  <v:(<T> Token<",">)*> <e:T?> => match e {
+    None => mk_arc_slice(v.into_iter()),
+    Some(e) => mk_arc_slice(v.into_iter().chain(std::iter::once(e))),
   }
 };
 

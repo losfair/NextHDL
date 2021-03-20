@@ -36,7 +36,7 @@ fn top_level(
   error: signal_out<uint<1>>,
 ) {
   fork {
-    ready.write_priority<0>(0);
+    ready.write<Priority = 0>(0);
     fork(self);
   }
 
@@ -54,7 +54,7 @@ fn top_level(
     },
     {
       (value: uint<32>, ok: uint<1>) in
-      ready.write_priority<1>(1);
+      ready.write<Priority = 1>(1);
       if ok {
         output.write(value);
         error.write(0);
