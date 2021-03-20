@@ -1,13 +1,13 @@
-fn leb128_decode_statem(
+fn leb128_decode_statem<Size: Int = 32>(
   next_byte: fn (_: fn (_: uint<8>)),
   completion: fn (_: uint<32>, ok: uint<1>),
 ) {
-  leb128_decode_statem_inner<5, 0>(next_byte, completion, empty);
+  leb128_decode_statem_inner<N = 5, M = 0, Size = Size>(next_byte, completion, empty);
 }
 
-fn leb128_decode_statem_inner<N: Int, M: Int>(
+fn leb128_decode_statem_inner<N: Int, M: Int, Size: Int>(
   next_byte: fn (_: fn (_: uint<8>)),
-  completion: fn (_: uint<32>, ok: uint<1>),
+  completion: fn (_: uint<Size>, ok: uint<1>),
   buf: uint<M>,
 ) where N.eq(0) {
   fork {
@@ -19,10 +19,10 @@ fn leb128_decode_statem_inner<N: Int, M: Int>(
 
     let buf = byte.slice<6, 0>().append(buf);
     if byte.get(7) {
-      leb128_decode_statem_inner<N.sub(1), M.add(7)>(next_byte, completion, buf);
+      leb128_decode_statem_inner<N.sub(1), M.add(7), Size>(next_byte, completion, buf);
     } else {
       fork {
-        completion(buf.slice<31, 0>(), 1);
+        completion(buf.slice<Size.sub(1), 0>(), 1);
       }
     }
   }
