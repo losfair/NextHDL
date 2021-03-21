@@ -5,6 +5,7 @@ use crate::parser::grammar_helper as helper;
 use crate::parser::state::State;
 use std::sync::Arc;
 use crate::util::{ArcSliceExt, mk_arc_slice};
+use std::collections::BTreeMap;
 
 grammar(state: &mut State);
 
@@ -18,8 +19,19 @@ pub ModuleDef: ast::ModuleDef = {
 
 ModuleItem: ast::ModuleItem = {
   <x:FnDef> => ast::ModuleItem::Fn(x),
+  <x:StructDef> => ast::ModuleItem::Struct(x),
   Token<"extern"> Token<"signal"> <x:GenericDef> Token<";"> => ast::ModuleItem::ExternSignal(x),
   Token<"import"> <path:StringLit> Token<"as"> <as_name:Identifier> Token<";"> => ast::ModuleItem::Import(ast::ImportItem { path, as_name }),
+};
+
+StructDef: ast::StructDef = {
+  Token<"struct"> <name:Identifier> <tyargs:TyArgList?> Token<"{"> <fields:(<GenericDef> ",")*> <last_field:GenericDef?> Token<"}"> => {
+    let fields: BTreeMap<Arc<str>, ast::GenericDef> =
+      fields.into_iter().chain(std::iter::once(last_field).filter_map(|x| x))
+        .map(|x| (x.name.0.clone(), x))
+        .collect();
+    ast::StructDef { name, fields: Arc::new(fields), tyargs: tyargs.unwrap_or_else(|| Arc::new([])) }
+  },
 };
 
 FnDef: ast::FnDef = {
@@ -57,7 +69,7 @@ Type: ast::Type = {
 };
 
 FnMeta: ast::FnMeta = {
-  <tyargs:FnTyArgList?> <args:FnArgList> <ret:FnRet?> => ast::FnMeta {
+  <tyargs:TyArgList?> <args:FnArgList> <ret:FnRet?> => ast::FnMeta {
     tyargs: tyargs.unwrap_or_else(|| Arc::new([])),
     args,
     ret,
@@ -68,12 +80,12 @@ FnRet: Arc<ast::Type> = {
   Token<"->"> <ty:Type> => Arc::new(ty),
 };
 
-FnTyArgList: Arc<[ast::FnTyArg]> = {
-  Token<"<"> <list:Comma<FnTyArg>> Token<">"> => list,
+TyArgList: Arc<[ast::TyArg]> = {
+  Token<"<"> <list:Comma<TyArg>> Token<">"> => list,
 };
 
-FnTyArg: ast::FnTyArg = {
-  <name:Identifier> Token<":"> <kind:Type> <default_value:(Token<"="> <ExprTypeLevel>)?> => ast::FnTyArg { name, kind, default_value },
+TyArg: ast::TyArg = {
+  <name:Identifier> Token<":"> <kind:Type> <default_value:(Token<"="> <ExprTypeLevel>)?> => ast::TyArg { name, kind, default_value },
 };
 
 FnArgList: Arc<[ast::FnArg]> = {
@@ -84,7 +96,7 @@ FnArg: ast::FnArg = {
   <name:Identifier> Token<":"> <ty:Type> => ast::FnArg { name, ty },
 };
 
-ActualTyArgList: Arc<[ast::TypeAssign]> = {
+TypeAssignList: Arc<[ast::TypeAssign]> = {
   Token<"<"> <list:Comma<TypeAssign>> Token<">"> => list,
 };
 
@@ -147,7 +159,7 @@ ExprBaseV<I>: ast::ExprV = {
   <l:Literal> => ast::ExprV::Lit(l),
   <id:Identifier> => ast::ExprV::Ident(id),
   <base:I> Token<"."> <id:Identifier> => ast::ExprV::Dot { base: Arc::new(base), id },
-  <base:I> <tyargs:ActualTyArgList> => ast::ExprV::Specialize { base: Arc::new(base), tyargs },
+  <base:I> <tyassigns:TypeAssignList> => ast::ExprV::Specialize { base: Arc::new(base), tyassigns },
   <base:I> <args:ActualArgList<I>> => {
     ast::ExprV::Call { base: Arc::new(base), args }
   },

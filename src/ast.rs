@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use num_bigint::BigUint;
 
@@ -16,7 +16,15 @@ pub struct Comment {
 pub enum ModuleItem {
   Import(ImportItem),
   Fn(FnDef),
+  Struct(StructDef),
   ExternSignal(GenericDef),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct StructDef {
+  pub name: Identifier,
+  pub fields: Arc<BTreeMap<Arc<str>, GenericDef>>,
+  pub tyargs: Arc<[TyArg]>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -52,7 +60,7 @@ pub struct FnBody {
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct FnMeta {
-  pub tyargs: Arc<[FnTyArg]>,
+  pub tyargs: Arc<[TyArg]>,
   pub args: Arc<[FnArg]>,
   pub ret: Option<Arc<Type>>,
 }
@@ -69,7 +77,7 @@ pub enum TypeV {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct FnTyArg {
+pub struct TyArg {
   pub name: Identifier,
   pub kind: Type,
   pub default_value: Option<Expr>,
@@ -129,7 +137,7 @@ pub enum ExprV {
   },
   Specialize {
     base: Arc<Expr>,
-    tyargs: Arc<[TypeAssign]>,
+    tyassigns: Arc<[TypeAssign]>,
   },
   Call {
     base: Arc<Expr>,
