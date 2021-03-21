@@ -25,13 +25,17 @@ ModuleItem: ast::ModuleItem = {
 };
 
 StructDef: ast::StructDef = {
-  Token<"struct"> <name:Identifier> <tyargs:TyArgList?> Token<"{"> <fields:(<GenericDef> ",")*> <last_field:GenericDef?> Token<"}"> => {
-    let fields: BTreeMap<Arc<str>, ast::GenericDef> =
+  Token<"struct"> <name:Identifier> <tyargs:TyArgList?> Token<"{"> <fields:(<StructFieldDef> ",")*> <last_field:StructFieldDef?> Token<"}"> => {
+    let fields: BTreeMap<Arc<str>, ast::Type> =
       fields.into_iter().chain(std::iter::once(last_field).filter_map(|x| x))
-        .map(|x| (x.name.0.clone(), x))
+        .map(|x| (x.0.0, x.1))
         .collect();
     ast::StructDef { name, fields: Arc::new(fields), tyargs: tyargs.unwrap_or_else(|| Arc::new([])) }
   },
+};
+
+StructFieldDef: (ast::Identifier, ast::Type) = {
+  <name:Identifier> Token<":"> <ty:Type> => (name, ty),
 };
 
 FnDef: ast::FnDef = {

@@ -23,7 +23,7 @@ pub enum ModuleItem {
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct StructDef {
   pub name: Identifier,
-  pub fields: Arc<BTreeMap<Arc<str>, GenericDef>>,
+  pub fields: Arc<BTreeMap<Arc<str>, Type>>,
   pub tyargs: Arc<[TyArg]>,
 }
 
