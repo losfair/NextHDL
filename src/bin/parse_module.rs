@@ -17,13 +17,17 @@ fn main() -> Result<()> {
   let mut ctx = EvalContext::default();
   for item in ast.items.iter() {
     match item {
-      ModuleItem::Fn(def) => {
+      ModuleItem::Fn(_def) => {
+        // TODO
+        unimplemented!()
+        /*
         ctx.names = ctx.names.insert(
           def.name.0.clone(),
           Arc::new(Value::Unspecialized(UnspecializedType::Fn(
             def.meta.clone(),
           ))),
         );
+        */
       }
       ModuleItem::Struct(def) => {
         ctx.names = ctx.names.insert(
@@ -37,25 +41,6 @@ fn main() -> Result<()> {
     }
   }
 
-  for item in ast.items.iter() {
-    match item {
-      ModuleItem::Fn(def) => {
-        println!("Metadata of function `{}` before evaluation:", def.name.0);
-        println!("{:?}", def.meta);
-
-        if def.meta.tyargs.len() != 0 {
-          println!("Skipping evaluation");
-          continue;
-        }
-
-        let ctx = EvalContext::default();
-        let result = ctx.specialize_fntype(&def.meta, &[], true)?;
-        println!("After evaluation:");
-        println!("{:?}", result);
-      }
-      _ => {}
-    }
-  }
   println!("{:#?}", ast);
   Ok(())
 }

@@ -2,10 +2,10 @@ use anyhow::Result;
 use num_bigint::BigUint;
 use num_traits::ops::checked::CheckedDiv;
 use rpds::RedBlackTreeMapSync;
-use std::{collections::BTreeMap, sync::Arc};
+use std::{cmp::Ordering, collections::BTreeMap, sync::Arc};
 use thiserror::Error;
 
-use crate::ast::{Expr, ExprV, FnMeta, Identifier, LiteralV, StructDef, TypeAssign};
+use crate::ast::{Expr, ExprV, FnMeta, Identifier, LiteralV, Stmt, StmtV, StructDef, TypeAssign};
 use std::convert::TryFrom;
 
 #[derive(Error, Debug)]
@@ -52,6 +52,15 @@ pub enum EvalError {
   #[error("division by zero")]
   DivByZero,
 
+  #[error("argument count mismatch")]
+  ArgumentCountMismatch,
+
+  #[error("call to non-callable value")]
+  CallingNonCallable,
+
+  #[error("return type mismatch")]
+  ReturnTypeMismatch,
+
   #[error("not implemented: {0}")]
   NotImplemented(&'static str),
 
@@ -59,33 +68,41 @@ pub enum EvalError {
   ExprNotImplemented(Expr),
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct EvalContext {
   /// All names in the current context. A persistent red-black tree is used for efficient
   /// scope nesting.
   pub names: RedBlackTreeMapSync<Arc<str>, Arc<Value>>,
+
+  /// Top-level context. Used for resolving function types.
+  pub top_level: RedBlackTreeMapSync<Arc<str>, Arc<Value>>,
 }
 
 /// An unspecialized type. Contains zero or more unspecified type variables.
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum UnspecializedType {
   Product(StructDef),
   Uint,
   Signal,
-  Fn(FnMeta),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Clone, Debug)]
 pub struct IdentPath(pub Arc<[Identifier]>);
 
 /// The output of some computation. Evaluating an `Expr` produces a `Value`.
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Clone, Debug)]
 pub enum Value {
   /// A rank-0 concrete `uint` value.
   UintValue(UintValue),
 
   /// A rank-0 product (struct) value.
   ProductValue(ProductValue),
+
+  /// A rank-0 function value that is not yet specialized.
+  UnspecializedFnValue(UnspecializedFnValue),
+
+  /// A rank-0 function value that is already specialized.
+  SpecializedFnValue(SpecializedFnValue),
 
   /// A rank-1 specialized function type.
   FnType(SpecializedFnType),
@@ -100,8 +117,33 @@ pub enum Value {
   Unspecialized(UnspecializedType),
 }
 
+impl PartialEq for Value {
+  fn eq(&self, other: &Value) -> bool {
+    match (self, other) {
+      (Value::UintValue(ll), Value::UintValue(rr)) => ll.value == rr.value,
+      (Value::ProductValue(ll), Value::ProductValue(rr)) => ll == rr,
+      (Value::FnType(ll), Value::FnType(rr)) => ll == rr,
+      (Value::ProductType(ll), Value::ProductType(rr)) => ll == rr,
+      (Value::BuiltinType(ll), Value::BuiltinType(rr)) => ll == rr,
+      (Value::Unspecialized(ll), Value::Unspecialized(rr)) => ll == rr,
+      _ => false,
+    }
+  }
+}
+
+impl Eq for Value {}
+
+impl PartialOrd for Value {
+  fn partial_cmp(&self, other: &Value) -> Option<Ordering> {
+    match (self, other) {
+      (Value::UintValue(ll), Value::UintValue(rr)) => ll.value.partial_cmp(&rr.value),
+      _ => None,
+    }
+  }
+}
+
 /// A concrete `uint` value.
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Clone, Debug)]
 pub struct UintValue {
   /// The value.
   pub value: BigUint,
@@ -127,35 +169,76 @@ impl Value {
       _ => return Err(EvalError::GetTypeForValueOfUnknownType.into()),
     })
   }
+
+  pub fn truthy(&self) -> Result<bool> {
+    match self {
+      Value::UintValue(UintValue { value, .. }) => {
+        if u32::try_from(value).unwrap_or(1) == 0 {
+          Ok(false)
+        } else {
+          Ok(true)
+        }
+      }
+      _ => Err(EvalError::TypeMismatch.into()),
+    }
+  }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SpecializedFnType {
+  /// Value of type arguments.
+  pub tyargs: BTreeMap<Identifier, Arc<Value>>,
   pub args: Vec<SpecializedFnArg>,
   pub ret: Option<Arc<Value>>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Clone, Debug)]
+pub struct UnspecializedFnValue {
+  pub ty: FnMeta,
+  pub body: Arc<[Stmt]>,
+  pub context: EvalContext,
+}
+
+#[derive(Clone, Debug)]
+pub struct SpecializedFnValue {
+  pub ty: SpecializedFnType,
+  pub body: Arc<[Stmt]>,
+  pub context: EvalContext,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SpecializedFnArg {
   pub name: Identifier,
   pub ty: Arc<Value>,
   pub default_value: Option<Arc<Value>>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProductValue {
   pub fields: BTreeMap<Arc<str>, Arc<Value>>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProductType {
   pub fields: BTreeMap<Arc<str>, Arc<Value>>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BuiltinType {
   Uint { bits: Option<u32> },
   Signal { inner: Arc<Value> },
+}
+
+#[derive(Default)]
+pub struct BlockContext {
+  /// A map from names of local variables to their types.
+  pub local_variable_types: BTreeMap<Identifier, Arc<Value>>,
+
+  /// Updated variables in this block.
+  pub updated_variables: BTreeMap<Identifier, Arc<Value>>,
+
+  /// The result of the last expression.
+  pub last_result: Option<Arc<Value>>,
 }
 
 impl EvalContext {
@@ -175,22 +258,22 @@ impl EvalContext {
     &self,
     meta: &FnMeta,
     tyassigns: &[TypeAssign],
-    is_def: bool,
   ) -> Result<SpecializedFnType> {
-    let mut this = self.clone();
+    // Run in top-level context.
+    let mut this = EvalContext {
+      names: self.top_level.clone(),
+      top_level: self.top_level.clone(),
+    };
 
     let named_tyassigns = tyassigns
       .iter()
       .filter_map(|x| x.ty.as_ref().map(|name| (name, &x.e)))
       .collect::<BTreeMap<_, _>>();
 
+    let mut tyarg_values = BTreeMap::new();
+
     // Compute concrete values of type arguments.
     for (i, tyarg) in meta.tyargs.iter().enumerate() {
-      // Only allow default values in function definition place.
-      if !is_def && tyarg.default_value.is_some() {
-        return Err(EvalError::NonDefFnTypeArgDefaultValue.into());
-      }
-
       // Get the concrete type.
       let tyassign = tyassigns
         .get(i)
@@ -223,7 +306,10 @@ impl EvalContext {
       }
 
       // Ok let's insert it
-      this.names = this.names.insert(tyarg.name.0.clone(), tyassign);
+      this
+        .names
+        .insert_mut(tyarg.name.0.clone(), tyassign.clone());
+      tyarg_values.insert(tyarg.name.clone(), tyassign);
     }
 
     // Compute concrete types of arguments.
@@ -246,7 +332,11 @@ impl EvalContext {
       .map(|x| this.eval_expr(&**x))
       .transpose()?;
 
-    return Ok(SpecializedFnType { args, ret });
+    return Ok(SpecializedFnType {
+      tyargs: tyarg_values,
+      args,
+      ret,
+    });
   }
 
   /// Specializes an rank-2 `UnspecializedType` into a rank-1 type.
@@ -291,7 +381,6 @@ impl EvalContext {
           return Err(EvalError::BadSpecialization.into());
         }
       }
-      UnspecializedType::Fn(meta) => Value::FnType(self.specialize_fntype(meta, tyassigns, false)?),
     }))
   }
 
@@ -365,16 +454,7 @@ impl EvalContext {
         "select" => {
           let on_true = args.get(0).ok_or_else(|| EvalError::MissingArgument)?;
           let on_false = args.get(1).ok_or_else(|| EvalError::MissingArgument)?;
-          let predicate = match &*base {
-            Value::UintValue(UintValue { value, .. }) => {
-              if u32::try_from(value).unwrap_or(1) == 0 {
-                false
-              } else {
-                true
-              }
-            }
-            _ => return Err(EvalError::TypeMismatch.into()),
-          };
+          let predicate = base.truthy()?;
           if predicate {
             return Ok(self.eval_expr(on_true)?);
           } else {
@@ -384,7 +464,13 @@ impl EvalContext {
         _ => return Err(EvalError::UnknownBuiltinCall(id.0.clone()).into()),
       }
     } else {
-      return Err(EvalError::NotImplemented("this call is not yet implemented").into());
+      // Call to a user-defined function
+      let base = self.eval_expr(&base)?;
+      let mut arg_values = Vec::with_capacity(args.len());
+      for e in args.iter() {
+        arg_values.push(self.eval_expr(e)?);
+      }
+      return Ok(self.call_function(base, &arg_values)?);
     }))
   }
 
@@ -418,7 +504,21 @@ impl EvalContext {
       ExprV::Specialize { base, tyassigns } => {
         let base = self.eval_expr(&base)?;
         match &*base {
-          Value::Unspecialized(ref ty) => return Ok(self.specialize_type(ty, &*tyassigns)?),
+          // A rank-2 unspecialized type.
+          Value::Unspecialized(ty) => return Ok(self.specialize_type(ty, &*tyassigns)?),
+
+          // A rank-0 function value with unspecialized signature.
+          // The only place where this is allowed is a top-level function -
+          // TODO: Check and error otherwise.
+          Value::UnspecializedFnValue(value) => {
+            let ty = self.specialize_fntype(&value.ty, &*tyassigns)?;
+            Value::SpecializedFnValue(SpecializedFnValue {
+              ty,
+              body: value.body.clone(),
+              context: value.context.clone(),
+            })
+          }
+
           _ => {
             return Err(EvalError::SpecializeNonUnspecializedValue.into());
           }
@@ -432,5 +532,156 @@ impl EvalContext {
       }
     };
     Ok(Arc::new(value))
+  }
+
+  pub fn eval_stmt(&mut self, stmt: &Stmt, ctx: &mut BlockContext) -> Result<()> {
+    match &stmt.v {
+      StmtV::Let { def } => {
+        let init_value = def
+          .init_value
+          .as_ref()
+          .map(|x| self.eval_expr(x))
+          .transpose()?;
+        let actual_ty = init_value.as_ref().map(|x| x.get_type()).transpose()?;
+        let ty = if let Some(expected_ty) = &def.ty {
+          let expected_ty = self.eval_expr(expected_ty)?;
+          if let Some(actual_ty) = actual_ty {
+            if expected_ty != actual_ty {
+              return Err(EvalError::TypeMismatch.into());
+            }
+          }
+          expected_ty
+        } else {
+          actual_ty.ok_or_else(|| EvalError::MissingType)?
+        };
+        ctx.local_variable_types.insert(def.name.clone(), ty);
+
+        if let Some(x) = init_value {
+          self.names.insert_mut(def.name.0.clone(), x);
+        }
+      }
+      StmtV::Assign { left, right } => {
+        let right = self.eval_expr(right)?;
+
+        // Get actual type
+        let right_ty = right.get_type()?;
+
+        // Get expected type
+        let expected_ty = if let Some(x) = ctx.local_variable_types.get(left) {
+          Some(x.clone())
+        } else if let Some(x) = self.names.get(&left.0) {
+          Some(x.get_type()?)
+        } else {
+          None
+        };
+
+        // Typeck
+        if let Some(expected_ty) = expected_ty {
+          if expected_ty != right_ty {
+            return Err(EvalError::TypeMismatch.into());
+          }
+        }
+
+        // Update state.
+        self.names.insert_mut(left.0.clone(), right.clone());
+        if ctx.local_variable_types.get(left).is_none() {
+          ctx.updated_variables.insert(left.clone(), right);
+        }
+      }
+      StmtV::IfElse {
+        condition,
+        if_body,
+        else_body,
+      } => {
+        let condition = self.eval_expr(condition)?.truthy()?;
+        if condition {
+          self.eval_stmt_sequence(&**if_body, Some(ctx))?;
+        } else {
+          if let Some(else_body) = else_body {
+            self.eval_stmt_sequence(&**else_body, Some(ctx))?;
+          }
+        }
+      }
+      StmtV::Expr { e } => {
+        ctx.last_result = Some(self.eval_expr(e)?);
+      }
+      StmtV::Signal { .. } => return Err(EvalError::NotImplemented("signal stmt").into()),
+    }
+
+    Ok(())
+  }
+
+  pub fn eval_stmt_sequence(
+    &mut self,
+    stmts: &[Stmt],
+    mut parent_ctx: Option<&mut BlockContext>,
+  ) -> Result<Option<Arc<Value>>> {
+    let mut ctx = BlockContext::default();
+    let mut this = self.clone();
+    for stmt in stmts.iter() {
+      this.eval_stmt(stmt, &mut ctx)?;
+    }
+    for (name, value) in ctx.updated_variables {
+      self.names.insert_mut(name.0.clone(), value.clone());
+
+      // Propagate update to parent context.
+      if let Some(parent) = parent_ctx {
+        if parent.local_variable_types.get(&name).is_none() {
+          parent.updated_variables.insert(name, value);
+        }
+        parent_ctx = Some(parent);
+      }
+    }
+
+    if let Some(parent) = parent_ctx {
+      if let Some(last_result) = &ctx.last_result {
+        parent.last_result = Some(last_result.clone());
+      }
+    }
+
+    Ok(ctx.last_result)
+  }
+
+  pub fn call_function(&self, target: Arc<Value>, args: &[Arc<Value>]) -> Result<Arc<Value>> {
+    // Create a clean callee context.
+    let mut callee_ctx = EvalContext::default();
+
+    let target = match &*target {
+      Value::SpecializedFnValue(value) => value,
+      _ => return Err(EvalError::CallingNonCallable.into()),
+    };
+    if target.ty.args.len() != args.len() {
+      return Err(EvalError::ArgumentCountMismatch.into());
+    }
+
+    // First, insert type parameters...
+    for (k, v) in target.ty.tyargs.iter() {
+      callee_ctx.names.insert_mut(k.0.clone(), v.clone());
+    }
+
+    // Then, insert runtime parameters.
+    for (i, arg) in target.ty.args.iter().enumerate() {
+      callee_ctx
+        .names
+        .insert_mut(arg.name.0.clone(), args[i].clone());
+    }
+
+    // Run it!
+    let retval = callee_ctx.eval_stmt_sequence(&target.body, None)?;
+    let actual_ret_type = retval.as_ref().map(|x| x.get_type()).transpose()?;
+
+    // Implicitly ignore the return type if nothing is expected
+    if target.ty.ret.is_some() {
+      if target.ty.ret != actual_ret_type {
+        return Err(EvalError::ReturnTypeMismatch.into());
+      }
+      return Ok(retval.unwrap());
+    } else {
+      // The "unit type".
+      return Ok(Arc::new(Value::UintValue(UintValue {
+        bits: Some(0),
+        value: BigUint::from(0u32),
+      })));
+    }
   }
 }
