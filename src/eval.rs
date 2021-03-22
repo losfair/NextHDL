@@ -61,9 +61,12 @@ pub enum EvalError {
 
 #[derive(Clone, Default)]
 pub struct EvalContext {
+  /// All names in the current context. A persistent red-black tree is used for efficient
+  /// scope nesting.
   pub names: RedBlackTreeMapSync<Arc<str>, Arc<Value>>,
 }
 
+/// An unspecialized type. Contains zero or more unspecified type variables.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum UnspecializedType {
   Product(StructDef),
@@ -75,23 +78,40 @@ pub enum UnspecializedType {
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct IdentPath(pub Arc<[Identifier]>);
 
+/// The output of some computation. Evaluating an `Expr` produces a `Value`.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum Value {
+  /// A rank-0 concrete `uint` value.
   UintValue(UintValue),
-  Unspecialized(UnspecializedType),
-  FnType(SpecializedFnType),
+
+  /// A rank-0 product (struct) value.
   ProductValue(ProductValue),
+
+  /// A rank-1 specialized function type.
+  FnType(SpecializedFnType),
+
+  /// A rank-1 product (struct) type.
   ProductType(ProductType),
+
+  /// A rank-1 builtin type.
   BuiltinType(BuiltinType),
+
+  /// A rank-2 unspecialized type.
+  Unspecialized(UnspecializedType),
 }
 
+/// A concrete `uint` value.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct UintValue {
+  /// The value.
   pub value: BigUint,
+
+  /// The bit-width of this `uint`.
   pub bits: Option<u32>,
 }
 
 impl Value {
+  /// Computes the type of a rank-0 `Value`.
   pub fn get_type(&self) -> Result<Arc<Value>> {
     Ok(match self {
       Value::UintValue(UintValue { bits, .. }) => {
@@ -146,16 +166,11 @@ impl EvalContext {
     }
   }
 
-  /// Specializes the type of a `fn`.
+  /// Specializes a rank-2 `UnspecializedType::Fn` into a rank-1 `SpecializedFnType`.
   ///
-  /// Used in two places:
-  ///
-  /// - Call: `some_fn<TypeA, TypeB = C>(...)`
-  /// - Expression: `struct A<TypeA> { some_field: fn<TypeA>(v: TypeA) }`
-  ///
-  /// In the Call case, `tyassigns` should be the types passed for specialization.
-  ///
-  /// In the Expression case, `tyassigns` should be empty, and the "context" will be used.
+  /// Takes a function signature like `fn <TypeA, TypeB: uint>(a: TypeA, b: uint<TypeB>) -> uint<TypeB.add(1)>`
+  /// and an array of assignments to type variables, and eliminates all type variables and produces a
+  /// concrete function type like `fn(a: signal<uint<1>>, b: uint<8>) -> uint<9>`.
   pub fn specialize_fntype(
     &self,
     meta: &FnMeta,
@@ -234,6 +249,7 @@ impl EvalContext {
     return Ok(SpecializedFnType { args, ret });
   }
 
+  /// Specializes an rank-2 `UnspecializedType` into a rank-1 type.
   fn specialize_type(
     &self,
     ty: &UnspecializedType,
@@ -279,6 +295,7 @@ impl EvalContext {
     }))
   }
 
+  /// Evaluates a `Call` expression..
   fn eval_call(&self, base: &Expr, args: &[Expr]) -> Result<Arc<Value>> {
     Ok(Arc::new(if let ExprV::Dot { base, id } = &base.v {
       let base = self.eval_expr(&base)?;
@@ -371,6 +388,7 @@ impl EvalContext {
     }))
   }
 
+  /// Evaluates an `Expr` and produces a `Value`.
   pub fn eval_expr(&self, e: &Expr) -> Result<Arc<Value>> {
     let value = match &e.v {
       ExprV::Lit(x) => match x.v {
