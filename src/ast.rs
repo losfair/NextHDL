@@ -23,7 +23,7 @@ pub enum ModuleItem {
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct StructDef {
   pub name: Identifier,
-  pub fields: Arc<BTreeMap<Arc<str>, Type>>,
+  pub fields: Arc<BTreeMap<Arc<str>, Expr>>,
   pub tyargs: Arc<[TyArg]>,
 }
 
@@ -36,7 +36,7 @@ pub struct ImportItem {
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct GenericDef {
   pub name: Identifier,
-  pub ty: Option<Type>,
+  pub ty: Option<Expr>,
   pub init_value: Option<Expr>,
 }
 
@@ -62,31 +62,20 @@ pub struct FnBody {
 pub struct FnMeta {
   pub tyargs: Arc<[TyArg]>,
   pub args: Arc<[FnArg]>,
-  pub ret: Option<Arc<Type>>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct Type {
-  pub v: TypeV,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum TypeV {
-  Fn { meta: FnMeta },
-  Dynamic { tyexp: Expr },
+  pub ret: Option<Arc<Expr>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct TyArg {
   pub name: Identifier,
-  pub kind: Type,
+  pub kind: Option<Expr>,
   pub default_value: Option<Expr>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct FnArg {
   pub name: Identifier,
-  pub ty: Type,
+  pub ty: Expr,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -131,6 +120,7 @@ pub struct Expr {
 pub enum ExprV {
   Lit(Literal),
   Ident(Identifier),
+  Fn(FnMeta),
   Dot {
     base: Arc<Expr>,
     id: Identifier,

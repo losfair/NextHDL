@@ -26,7 +26,7 @@ ModuleItem: ast::ModuleItem = {
 
 StructDef: ast::StructDef = {
   Token<"struct"> <name:Identifier> <tyargs:TyArgList?> Token<"{"> <fields:(<StructFieldDef> ",")*> <last_field:StructFieldDef?> Token<"}"> => {
-    let fields: BTreeMap<Arc<str>, ast::Type> =
+    let fields: BTreeMap<Arc<str>, ast::Expr> =
       fields.into_iter().chain(std::iter::once(last_field).filter_map(|x| x))
         .map(|x| (x.0.0, x.1))
         .collect();
@@ -34,8 +34,8 @@ StructDef: ast::StructDef = {
   },
 };
 
-StructFieldDef: (ast::Identifier, ast::Type) = {
-  <name:Identifier> Token<":"> <ty:Type> => (name, ty),
+StructFieldDef: (ast::Identifier, ast::Expr) = {
+  <name:Identifier> Token<":"> <ty:Expr> => (name, ty),
 };
 
 FnDef: ast::FnDef = {
@@ -43,7 +43,7 @@ FnDef: ast::FnDef = {
 };
 
 GenericDef: ast::GenericDef = {
-  <name:Identifier> <ty:(Token<":"> <Type>)?> <init_value:(Token<"="> <Expr>)?> => ast::GenericDef { name, ty, init_value },
+  <name:Identifier> <ty:(Token<":"> <Expr>)?> <init_value:(Token<"="> <Expr>)?> => ast::GenericDef { name, ty, init_value },
 };
 
 MaybeFnSpecializations: Arc<[ast::FnSpecialization]> = {
@@ -54,7 +54,7 @@ MaybeFnSpecializations: Arc<[ast::FnSpecialization]> = {
 };
 
 FnSpecializationWhere: ast::FnSpecialization = {
-  Token<"where"> <e:ExprTypeLevel> <body:FnBody> => ast::FnSpecialization { where_expr: Some(e), body },
+  Token<"where"> <e:Expr> <body:FnBody> => ast::FnSpecialization { where_expr: Some(e), body },
 };
 
 FnSpecializationDefault: ast::FnSpecialization = {
@@ -65,13 +65,6 @@ FnBody: ast::FnBody = {
   Token<"{"> <body:Body> Token<"}"> => ast::FnBody { body },
 };
 
-Type: ast::Type = {
-  Token<"fn"> <meta:FnMeta> => ast::Type { v: ast::TypeV::Fn { meta } },
-  <tyexp:Expr> => ast::Type { v: ast::TypeV::Dynamic {
-    tyexp,
-  } },
-};
-
 FnMeta: ast::FnMeta = {
   <tyargs:TyArgList?> <args:FnArgList> <ret:FnRet?> => ast::FnMeta {
     tyargs: tyargs.unwrap_or_else(|| Arc::new([])),
@@ -80,8 +73,8 @@ FnMeta: ast::FnMeta = {
   },
 };
 
-FnRet: Arc<ast::Type> = {
-  Token<"->"> <ty:Type> => Arc::new(ty),
+FnRet: Arc<ast::Expr> = {
+  Token<"->"> <ty:Expr> => Arc::new(ty),
 };
 
 TyArgList: Arc<[ast::TyArg]> = {
@@ -89,7 +82,9 @@ TyArgList: Arc<[ast::TyArg]> = {
 };
 
 TyArg: ast::TyArg = {
-  <name:Identifier> Token<":"> <kind:Type> <default_value:(Token<"="> <ExprTypeLevel>)?> => ast::TyArg { name, kind, default_value },
+  <name:Identifier> Token<":"> <kind:Expr> <default_value:(Token<"="> <Expr>)?> => {
+    ast::TyArg { name, kind: Some(kind), default_value }
+  },
 };
 
 FnArgList: Arc<[ast::FnArg]> = {
@@ -97,7 +92,7 @@ FnArgList: Arc<[ast::FnArg]> = {
 };
 
 FnArg: ast::FnArg = {
-  <name:Identifier> Token<":"> <ty:Type> => ast::FnArg { name, ty },
+  <name:Identifier> Token<":"> <ty:Expr> => ast::FnArg { name, ty },
 };
 
 TypeAssignList: Arc<[ast::TypeAssign]> = {
@@ -105,8 +100,8 @@ TypeAssignList: Arc<[ast::TypeAssign]> = {
 };
 
 TypeAssign: ast::TypeAssign = {
-  <e:ExprTypeLevel> => ast::TypeAssign { ty: None, e },
-  <ty:Identifier> Token<"="> <e:ExprTypeLevel> => ast::TypeAssign { ty: Some(ty), e },
+  <e:Expr> => ast::TypeAssign { ty: None, e },
+  <ty:Identifier> Token<"="> <e:Expr> => ast::TypeAssign { ty: Some(ty), e },
 };
 
 ActualArgList<I>: Arc<[ast::Expr]> = {
@@ -155,27 +150,28 @@ StmtV: ast::StmtV = {
   }
 }
 
-ExprBase<I>: ast::Expr = {
-  <v:ExprBaseV<I>> => ast::Expr { v }
+Expr_L1: ast::Expr = {
+  <v:ExprV_L1> => ast::Expr { v }
 };
 
-ExprBaseV<I>: ast::ExprV = {
+ExprV_L1: ast::ExprV = {
   <l:Literal> => ast::ExprV::Lit(l),
   <id:Identifier> => ast::ExprV::Ident(id),
-  <base:I> Token<"."> <id:Identifier> => ast::ExprV::Dot { base: Arc::new(base), id },
-  <base:I> <tyassigns:TypeAssignList> => ast::ExprV::Specialize { base: Arc::new(base), tyassigns },
-  <base:I> <args:ActualArgList<I>> => {
+  <base:Expr_L1> Token<"."> <id:Identifier> => ast::ExprV::Dot { base: Arc::new(base), id },
+  <base:Expr_L1> <tyassigns:TypeAssignList> => ast::ExprV::Specialize { base: Arc::new(base), tyassigns },
+  <base:Expr_L1> <args:ActualArgList<Expr_L1>> => {
     ast::ExprV::Call { base: Arc::new(base), args }
   },
   <b:Block> => ast::ExprV::Block(Arc::new(b)),
 };
 
-ExprTypeLevel: ast::Expr = {
-  ExprBase<ExprTypeLevel>,
+Expr: ast::Expr = {
+  <v:ExprV> => ast::Expr { v }
 };
 
-Expr: ast::Expr = {
-  ExprBase<Expr>,
+ExprV: ast::ExprV = {
+  Token<"fn"> <meta:FnMeta> => ast::ExprV::Fn(meta),
+  ExprV_L1,
 };
 
 Literal: ast::Literal = {
