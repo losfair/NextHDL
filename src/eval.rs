@@ -234,6 +234,51 @@ impl EvalContext {
     return Ok(SpecializedFnType { args, ret });
   }
 
+  fn specialize_type(
+    &self,
+    ty: &UnspecializedType,
+    tyassigns: &[TypeAssign],
+  ) -> Result<Arc<Value>> {
+    Ok(Arc::new(match ty {
+      UnspecializedType::Product(ref def) => {
+        let mut fields: BTreeMap<Arc<str>, Arc<Value>> = BTreeMap::new();
+        for (k, v) in def.fields.iter() {
+          let ty = self.eval_expr(v)?;
+          fields.insert(k.clone(), ty);
+        }
+        Value::ProductType(ProductType { fields })
+      }
+      UnspecializedType::Uint => {
+        if tyassigns.len() == 0 {
+          Value::BuiltinType(BuiltinType::Uint { bits: None })
+        } else if tyassigns.len() == 1 && tyassigns[0].ty.is_none() {
+          let width = self.eval_expr(&tyassigns[0].e)?;
+          match &*width {
+            Value::UintValue(UintValue { ref value, .. }) => {
+              let width = match u32::try_from(value) {
+                Ok(x) => x,
+                Err(_) => return Err(EvalError::BadSpecialization.into()),
+              };
+              Value::BuiltinType(BuiltinType::Uint { bits: Some(width) })
+            }
+            _ => return Err(EvalError::BadSpecialization.into()),
+          }
+        } else {
+          return Err(EvalError::BadSpecialization.into());
+        }
+      }
+      UnspecializedType::Signal => {
+        if tyassigns.len() == 1 && tyassigns[0].ty.is_none() {
+          let inner = self.eval_expr(&tyassigns[0].e)?;
+          Value::BuiltinType(BuiltinType::Signal { inner })
+        } else {
+          return Err(EvalError::BadSpecialization.into());
+        }
+      }
+      UnspecializedType::Fn(meta) => Value::FnType(self.specialize_fntype(meta, tyassigns, false)?),
+    }))
+  }
+
   pub fn eval_expr(&self, e: &Expr) -> Result<Arc<Value>> {
     let value = match &e.v {
       ExprV::Lit(x) => match x.v {
@@ -263,46 +308,7 @@ impl EvalContext {
       ExprV::Specialize { base, tyassigns } => {
         let base = self.eval_expr(&base)?;
         match &*base {
-          Value::Unspecialized(ref ty) => match ty {
-            UnspecializedType::Product(ref def) => {
-              let mut fields: BTreeMap<Arc<str>, Arc<Value>> = BTreeMap::new();
-              for (k, v) in def.fields.iter() {
-                let ty = self.eval_expr(v)?;
-                fields.insert(k.clone(), ty);
-              }
-              Value::ProductType(ProductType { fields })
-            }
-            UnspecializedType::Uint => {
-              if tyassigns.len() == 0 {
-                Value::BuiltinType(BuiltinType::Uint { bits: None })
-              } else if tyassigns.len() == 1 && tyassigns[0].ty.is_none() {
-                let width = self.eval_expr(&tyassigns[0].e)?;
-                match &*width {
-                  Value::UintValue(UintValue { ref value, .. }) => {
-                    let width = match u32::try_from(value) {
-                      Ok(x) => x,
-                      Err(_) => return Err(EvalError::BadSpecialization.into()),
-                    };
-                    Value::BuiltinType(BuiltinType::Uint { bits: Some(width) })
-                  }
-                  _ => return Err(EvalError::BadSpecialization.into()),
-                }
-              } else {
-                return Err(EvalError::BadSpecialization.into());
-              }
-            }
-            UnspecializedType::Signal => {
-              if tyassigns.len() == 1 && tyassigns[0].ty.is_none() {
-                let inner = self.eval_expr(&tyassigns[0].e)?;
-                Value::BuiltinType(BuiltinType::Signal { inner })
-              } else {
-                return Err(EvalError::BadSpecialization.into());
-              }
-            }
-            UnspecializedType::Fn(meta) => {
-              Value::FnType(self.specialize_fntype(meta, tyassigns, false)?)
-            }
-          },
+          Value::Unspecialized(ref ty) => return Ok(self.specialize_type(ty, &*tyassigns)?),
           _ => {
             return Err(EvalError::SpecializeNonUnspecializedValue.into());
           }

@@ -1,4 +1,5 @@
 use std::fs::read_to_string;
+use std::sync::Arc;
 
 use anyhow::Result;
 use nexthdl::{
@@ -19,13 +20,17 @@ fn main() -> Result<()> {
       ModuleItem::Fn(def) => {
         ctx.names = ctx.names.insert(
           def.name.0.clone(),
-          Value::Unspecialized(UnspecializedType::Fn(def.meta.clone())),
+          Arc::new(Value::Unspecialized(UnspecializedType::Fn(
+            def.meta.clone(),
+          ))),
         );
       }
       ModuleItem::Struct(def) => {
         ctx.names = ctx.names.insert(
           def.name.0.clone(),
-          Value::Unspecialized(UnspecializedType::Product(def.clone())),
+          Arc::new(Value::Unspecialized(UnspecializedType::Product(
+            def.clone(),
+          ))),
         );
       }
       _ => {}
