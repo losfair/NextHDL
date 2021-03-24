@@ -86,6 +86,9 @@ pub enum EvalError {
     actual_kind: Arc<Value>,
   },
 
+  #[error("type has no true value: {0:?}")]
+  TypeHasNoTrueValue(Arc<Value>),
+
   #[error("not implemented: {0}")]
   NotImplemented(&'static str),
 
@@ -123,6 +126,9 @@ pub enum Value {
   /// A rank-0 concrete `uint` value.
   UintValue(UintValue),
 
+  /// A rank-0 concrete `string` value.
+  StringValue(Arc<str>),
+
   /// A rank-0 product (struct) value.
   ProductValue(ProductValue),
 
@@ -149,6 +155,7 @@ impl PartialEq for Value {
   fn eq(&self, other: &Value) -> bool {
     match (self, other) {
       (Value::UintValue(ll), Value::UintValue(rr)) => ll.value == rr.value,
+      (Value::StringValue(ll), Value::StringValue(rr)) => ll == rr,
       (Value::ProductValue(ll), Value::ProductValue(rr)) => ll == rr,
       (Value::FnType(ll), Value::FnType(rr)) => ll == rr,
       (Value::ProductType(ll), Value::ProductType(rr)) => ll == rr,
@@ -192,6 +199,7 @@ impl Value {
       Value::UintValue(UintValue { bits, .. }) => {
         Arc::new(Value::BuiltinType(BuiltinType::Uint { bits: *bits }))
       }
+      Value::StringValue(_) => Arc::new(Value::BuiltinType(BuiltinType::String)),
       Value::ProductValue(value) => {
         let mut fields = BTreeMap::new();
         for (k, v) in &value.fields {
@@ -216,8 +224,8 @@ impl Value {
     })
   }
 
-  pub fn truthy(&self) -> Result<bool> {
-    match self {
+  pub fn truthy(self: &Arc<Self>) -> Result<bool> {
+    match &**self {
       Value::UintValue(UintValue { value, .. }) => {
         if u32::try_from(value).unwrap_or(1) == 0 {
           Ok(false)
@@ -225,7 +233,7 @@ impl Value {
           Ok(true)
         }
       }
-      _ => Err(EvalError::TypeMismatch.into()),
+      _ => Err(EvalError::TypeHasNoTrueValue(self.clone()).into()),
     }
   }
 
@@ -336,6 +344,7 @@ impl Eq for ProductType {}
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BuiltinType {
   Uint { bits: Option<u32> },
+  String,
   Signal { inner: Arc<Value> },
 }
 
@@ -692,6 +701,7 @@ impl EvalContext {
           bits: None,
           value: value.clone(),
         }),
+        LiteralV::String(ref value) => Value::StringValue(value.clone()),
       },
       ExprV::Ident(x) => {
         return Ok(self.lookup_name(&x)?);

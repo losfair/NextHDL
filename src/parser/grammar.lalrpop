@@ -233,6 +233,7 @@ Literal: ast::Literal = {
   <s:Token<r"0x[0-9a-fA-F]+">> =>? helper::parse_radix_prefixed_str(s, "0x", 16),
   <s:Token<r"0o[0-9a-fA-F]+">> =>? helper::parse_radix_prefixed_str(s, "0o", 8),
   <s:Token<r"0b[0-9a-fA-F]+">> =>? helper::parse_radix_prefixed_str(s, "0b", 2),
+  <s:StringLit> => ast::Literal { v: ast::LiteralV::String(s) },
 };
 
 StringLit: Arc<str> = {

@@ -150,6 +150,7 @@ pub struct Literal {
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum LiteralV {
   Uint(BigUint),
+  String(Arc<str>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
