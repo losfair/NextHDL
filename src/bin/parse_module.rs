@@ -2,10 +2,12 @@ use std::fs::read_to_string;
 use std::sync::Arc;
 
 use anyhow::Result;
+use arc_swap::ArcSwap;
 use nexthdl::{
   ast::{ModuleDef, ModuleItem},
-  eval::{EvalContext, UnspecializedType, Value},
+  eval::{EvalContext, SpecializedFnValue, UnspecializedFnValue, UnspecializedType, Value},
   parser::state::State,
+  util::mk_arc_str,
 };
 
 fn main() -> Result<()> {
@@ -14,33 +16,63 @@ fn main() -> Result<()> {
   let mut state = State::new();
   let ast: ModuleDef = parser.parse(&mut state, &f).unwrap();
 
+  println!("{:#?}", ast);
+
   let mut ctx = EvalContext::default();
+
+  // Placeholder value for now
+  let top_level_context = Arc::new(ArcSwap::new(Arc::new(EvalContext::default())));
+
+  // Insert builtin types
+  ctx.names.insert_mut(
+    mk_arc_str("uint"),
+    Arc::new(Value::Unspecialized(UnspecializedType::Uint)),
+  );
+
+  // First, insert types...
   for item in ast.items.iter() {
     match item {
-      ModuleItem::Fn(_def) => {
-        // TODO
-        unimplemented!()
-        /*
-        ctx.names = ctx.names.insert(
-          def.name.0.clone(),
-          Arc::new(Value::Unspecialized(UnspecializedType::Fn(
-            def.meta.clone(),
-          ))),
-        );
-        */
-      }
       ModuleItem::Struct(def) => {
-        ctx.names = ctx.names.insert(
-          def.name.0.clone(),
-          Arc::new(Value::Unspecialized(UnspecializedType::Product(
-            def.clone(),
-          ))),
-        );
+        let value = Arc::new(Value::Unspecialized(UnspecializedType::Product(
+          def.clone(),
+          top_level_context.clone(),
+        )));
+        ctx.names.insert_mut(def.name.0.clone(), value);
       }
       _ => {}
     }
   }
 
-  println!("{:#?}", ast);
+  // Then, insert functions.
+  for item in ast.items.iter() {
+    match item {
+      ModuleItem::Fn(def) => {
+        let value = if def.meta.tyargs.len() != 0 {
+          Arc::new(Value::UnspecializedFnValue(UnspecializedFnValue {
+            ty: def.meta.clone(),
+            body: def.specializations.clone(),
+            context: top_level_context.clone(),
+          }))
+        } else {
+          let ty = ctx.specialize_fntype(&def.meta, &[])?;
+          Arc::new(Value::SpecializedFnValue(SpecializedFnValue {
+            ty,
+            body: def.specializations.clone(),
+            context: top_level_context.clone(),
+          }))
+        };
+        ctx.names.insert_mut(def.name.0.clone(), value);
+      }
+      _ => {}
+    }
+  }
+
+  // Replace top-level EvalContext.
+  top_level_context.store(Arc::new(ctx.clone()));
+
+  let entry = ctx.names.get("entry").expect("missing entry");
+  let ret = EvalContext::call_function(entry.clone(), &[])?;
+  println!("ret = {:?}", ret);
+
   Ok(())
 }

@@ -1,11 +1,15 @@
 use anyhow::Result;
+use arc_swap::ArcSwap;
 use num_bigint::BigUint;
 use num_traits::ops::checked::CheckedDiv;
 use rpds::RedBlackTreeMapSync;
 use std::{cmp::Ordering, collections::BTreeMap, sync::Arc};
 use thiserror::Error;
 
-use crate::ast::{Expr, ExprV, FnMeta, Identifier, LiteralV, Stmt, StmtV, StructDef, TypeAssign};
+use crate::ast::{
+  Expr, ExprV, FnMeta, FnSpecialization, Identifier, LiteralV, Stmt, StmtV, StructDef, TyArg,
+  TypeAssign,
+};
 use std::convert::TryFrom;
 
 #[derive(Error, Debug)]
@@ -61,6 +65,12 @@ pub enum EvalError {
   #[error("return type mismatch")]
   ReturnTypeMismatch,
 
+  #[error("no specialization selected")]
+  NoSpecializationSelected,
+
+  #[error("bad cast")]
+  BadCast,
+
   #[error("not implemented: {0}")]
   NotImplemented(&'static str),
 
@@ -73,15 +83,12 @@ pub struct EvalContext {
   /// All names in the current context. A persistent red-black tree is used for efficient
   /// scope nesting.
   pub names: RedBlackTreeMapSync<Arc<str>, Arc<Value>>,
-
-  /// Top-level context. Used for resolving function types.
-  pub top_level: RedBlackTreeMapSync<Arc<str>, Arc<Value>>,
 }
 
 /// An unspecialized type. Contains zero or more unspecified type variables.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub enum UnspecializedType {
-  Product(StructDef),
+  Product(StructDef, Arc<ArcSwap<EvalContext>>),
   Uint,
   Signal,
 }
@@ -90,7 +97,7 @@ pub enum UnspecializedType {
 pub struct IdentPath(pub Arc<[Identifier]>);
 
 /// The output of some computation. Evaluating an `Expr` produces a `Value`.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum Value {
   /// A rank-0 concrete `uint` value.
   UintValue(UintValue),
@@ -125,7 +132,6 @@ impl PartialEq for Value {
       (Value::FnType(ll), Value::FnType(rr)) => ll == rr,
       (Value::ProductType(ll), Value::ProductType(rr)) => ll == rr,
       (Value::BuiltinType(ll), Value::BuiltinType(rr)) => ll == rr,
-      (Value::Unspecialized(ll), Value::Unspecialized(rr)) => ll == rr,
       _ => false,
     }
   }
@@ -182,6 +188,28 @@ impl Value {
       _ => Err(EvalError::TypeMismatch.into()),
     }
   }
+
+  /// Casts a value to this type.
+  pub fn cast_to_this_type(&self, value: &Arc<Value>) -> Result<Arc<Value>> {
+    match self {
+      Value::BuiltinType(BuiltinType::Uint { bits }) => {
+        // Truncate
+        let mut value = match &**value {
+          Value::UintValue(UintValue { value, .. }) => value.clone(),
+          _ => return Err(EvalError::BadCast.into()),
+        };
+        if let Some(target_bits) = *bits {
+          let value_bits = value.bits();
+          for i in (target_bits as u64)..value_bits {
+            value.set_bit(i, false);
+          }
+          assert!(value.bits() <= target_bits as u64);
+        }
+        Ok(Arc::new(Value::UintValue(UintValue { bits: *bits, value })))
+      }
+      _ => Err(EvalError::BadCast.into()),
+    }
+  }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -192,18 +220,18 @@ pub struct SpecializedFnType {
   pub ret: Option<Arc<Value>>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct UnspecializedFnValue {
   pub ty: FnMeta,
-  pub body: Arc<[Stmt]>,
-  pub context: EvalContext,
+  pub body: Arc<[FnSpecialization]>,
+  pub context: Arc<ArcSwap<EvalContext>>,
 }
 
 #[derive(Clone, Debug)]
 pub struct SpecializedFnValue {
   pub ty: SpecializedFnType,
-  pub body: Arc<[Stmt]>,
-  pub context: EvalContext,
+  pub body: Arc<[FnSpecialization]>,
+  pub context: Arc<ArcSwap<EvalContext>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -249,22 +277,11 @@ impl EvalContext {
     }
   }
 
-  /// Specializes a rank-2 `UnspecializedType::Fn` into a rank-1 `SpecializedFnType`.
-  ///
-  /// Takes a function signature like `fn <TypeA, TypeB: uint>(a: TypeA, b: uint<TypeB>) -> uint<TypeB.add(1)>`
-  /// and an array of assignments to type variables, and eliminates all type variables and produces a
-  /// concrete function type like `fn(a: signal<uint<1>>, b: uint<8>) -> uint<9>`.
-  pub fn specialize_fntype(
-    &self,
-    meta: &FnMeta,
+  fn compute_tyassigns(
+    &mut self,
     tyassigns: &[TypeAssign],
-  ) -> Result<SpecializedFnType> {
-    // Run in top-level context.
-    let mut this = EvalContext {
-      names: self.top_level.clone(),
-      top_level: self.top_level.clone(),
-    };
-
+    tyargs: &[TyArg],
+  ) -> Result<BTreeMap<Identifier, Arc<Value>>> {
     let named_tyassigns = tyassigns
       .iter()
       .filter_map(|x| x.ty.as_ref().map(|name| (name, &x.e)))
@@ -273,24 +290,24 @@ impl EvalContext {
     let mut tyarg_values = BTreeMap::new();
 
     // Compute concrete values of type arguments.
-    for (i, tyarg) in meta.tyargs.iter().enumerate() {
+    for (i, tyarg) in tyargs.iter().enumerate() {
       // Get the concrete type.
       let tyassign = tyassigns
         .get(i)
         .filter(|x| x.ty.is_none())
-        .map(|x| this.eval_expr(&x.e))
+        .map(|x| self.eval_expr(&x.e))
         .or_else(|| {
           named_tyassigns
             .get(&&tyarg.name)
-            .map(|x| this.eval_expr(*x))
+            .map(|x| self.eval_expr(*x))
         })
-        .or_else(|| tyarg.default_value.as_ref().map(|x| this.eval_expr(x)))
+        .or_else(|| tyarg.default_value.as_ref().map(|x| self.eval_expr(x)))
         .transpose()?
         .ok_or_else(|| EvalError::MissingTypeAssign)?;
 
       // Get the expected kind of the type.
       let expected_kind = if let Some(kind) = &tyarg.kind {
-        Some(this.eval_expr(kind)?)
+        Some(self.eval_expr(kind)?)
       } else {
         None
       };
@@ -306,11 +323,28 @@ impl EvalContext {
       }
 
       // Ok let's insert it
-      this
+      self
         .names
         .insert_mut(tyarg.name.0.clone(), tyassign.clone());
       tyarg_values.insert(tyarg.name.clone(), tyassign);
     }
+
+    Ok(tyarg_values)
+  }
+
+  /// Specializes a rank-2 `UnspecializedType::Fn` into a rank-1 `SpecializedFnType`.
+  ///
+  /// Takes a function signature like `fn <TypeA, TypeB: uint>(a: TypeA, b: uint<TypeB>) -> uint<TypeB.add(1)>`
+  /// and an array of assignments to type variables, and eliminates all type variables and produces a
+  /// concrete function type like `fn(a: signal<uint<1>>, b: uint<8>) -> uint<9>`.
+  pub fn specialize_fntype(
+    &self,
+    meta: &FnMeta,
+    tyassigns: &[TypeAssign],
+  ) -> Result<SpecializedFnType> {
+    let mut this = self.clone();
+
+    let tyarg_values = this.compute_tyassigns(tyassigns, &meta.tyargs)?;
 
     // Compute concrete types of arguments.
     let mut args = Vec::new();
@@ -346,10 +380,15 @@ impl EvalContext {
     tyassigns: &[TypeAssign],
   ) -> Result<Arc<Value>> {
     Ok(Arc::new(match ty {
-      UnspecializedType::Product(ref def) => {
+      UnspecializedType::Product(def, context) => {
+        // Specialize in its own context...
+        let mut specialization_context: EvalContext = (**context.load()).clone();
+
+        specialization_context.compute_tyassigns(tyassigns, &def.tyargs)?;
+
         let mut fields: BTreeMap<Arc<str>, Arc<Value>> = BTreeMap::new();
         for (k, v) in def.fields.iter() {
-          let ty = self.eval_expr(v)?;
+          let ty = specialization_context.eval_expr(v)?;
           fields.insert(k.clone(), ty);
         }
         Value::ProductType(ProductType { fields })
@@ -461,6 +500,12 @@ impl EvalContext {
             return Ok(self.eval_expr(on_false)?);
           }
         }
+        "cast" => {
+          let target_type = args.get(0).ok_or_else(|| EvalError::MissingArgument)?;
+          let target_type = self.eval_expr(target_type)?;
+          let output = target_type.cast_to_this_type(&base)?;
+          return Ok(output);
+        }
         _ => return Err(EvalError::UnknownBuiltinCall(id.0.clone()).into()),
       }
     } else {
@@ -470,7 +515,7 @@ impl EvalContext {
       for e in args.iter() {
         arg_values.push(self.eval_expr(e)?);
       }
-      return Ok(self.call_function(base, &arg_values)?);
+      return Ok(Self::call_function(base, &arg_values)?);
     }))
   }
 
@@ -511,7 +556,8 @@ impl EvalContext {
           // The only place where this is allowed is a top-level function -
           // TODO: Check and error otherwise.
           Value::UnspecializedFnValue(value) => {
-            let ty = self.specialize_fntype(&value.ty, &*tyassigns)?;
+            let context = value.context.load();
+            let ty = context.specialize_fntype(&value.ty, &*tyassigns)?;
             Value::SpecializedFnValue(SpecializedFnValue {
               ty,
               body: value.body.clone(),
@@ -642,10 +688,7 @@ impl EvalContext {
     Ok(ctx.last_result)
   }
 
-  pub fn call_function(&self, target: Arc<Value>, args: &[Arc<Value>]) -> Result<Arc<Value>> {
-    // Create a clean callee context.
-    let mut callee_ctx = EvalContext::default();
-
+  pub fn call_function(target: Arc<Value>, args: &[Arc<Value>]) -> Result<Arc<Value>> {
     let target = match &*target {
       Value::SpecializedFnValue(value) => value,
       _ => return Err(EvalError::CallingNonCallable.into()),
@@ -653,6 +696,9 @@ impl EvalContext {
     if target.ty.args.len() != args.len() {
       return Err(EvalError::ArgumentCountMismatch.into());
     }
+
+    // Derive a callee context.
+    let mut callee_ctx = (**target.context.load()).clone();
 
     // First, insert type parameters...
     for (k, v) in target.ty.tyargs.iter() {
@@ -666,8 +712,26 @@ impl EvalContext {
         .insert_mut(arg.name.0.clone(), args[i].clone());
     }
 
+    // Select body.
+    // TODO: Should this be done before runtime parameter evaluation?
+    let mut selected_spec: Option<&FnSpecialization> = None;
+    for spec in target.body.iter() {
+      if let Some(condition) = &spec.where_expr {
+        if callee_ctx.eval_expr(condition)?.truthy()? {
+          selected_spec = Some(spec);
+          break;
+        }
+      } else {
+        // Default
+        selected_spec = Some(spec);
+        break;
+      }
+    }
+
+    let selected_spec = selected_spec.ok_or_else(|| EvalError::NoSpecializationSelected)?;
+
     // Run it!
-    let retval = callee_ctx.eval_stmt_sequence(&target.body, None)?;
+    let retval = callee_ctx.eval_stmt_sequence(&selected_spec.body.body, None)?;
     let actual_ret_type = retval.as_ref().map(|x| x.get_type()).transpose()?;
 
     // Implicitly ignore the return type if nothing is expected
