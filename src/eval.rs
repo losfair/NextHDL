@@ -14,7 +14,7 @@ use std::convert::TryFrom;
 
 #[derive(Error, Debug)]
 pub enum EvalError {
-  #[error("identifier not found: {0}")]
+  #[error("identifier not found: \"{0}\"")]
   IdentifierNotFound(Arc<str>),
 
   #[error("dot operator used on a non-product value")]
@@ -37,6 +37,12 @@ pub enum EvalError {
 
   #[error("type mismatch")]
   TypeMismatch,
+
+  #[error("argument type mismatch: expected {expected:?}, got {actual:?}")]
+  ArgumentTypeMismatch {
+    expected: Arc<Value>,
+    actual: Arc<Value>,
+  },
 
   #[error("missing type")]
   MissingType,
@@ -62,14 +68,23 @@ pub enum EvalError {
   #[error("call to non-callable value")]
   CallingNonCallable,
 
-  #[error("return type mismatch")]
-  ReturnTypeMismatch,
+  #[error("return type mismatch: expected {expected:?}, got {actual:?}")]
+  ReturnTypeMismatch {
+    expected: Arc<Value>,
+    actual: Option<Arc<Value>>,
+  },
 
   #[error("no specialization selected")]
   NoSpecializationSelected,
 
   #[error("bad cast")]
   BadCast,
+
+  #[error("kind mismatch: expected {expected_kind:?}, got {actual_kind:?}")]
+  KindMismatch {
+    expected_kind: Arc<Value>,
+    actual_kind: Arc<Value>,
+  },
 
   #[error("not implemented: {0}")]
   NotImplemented(&'static str),
@@ -88,9 +103,15 @@ pub struct EvalContext {
 /// An unspecialized type. Contains zero or more unspecified type variables.
 #[derive(Debug)]
 pub enum UnspecializedType {
-  Product(StructDef, Arc<ArcSwap<EvalContext>>),
+  Product(Arc<UniqueProduct>),
   Uint,
   Signal,
+}
+
+#[derive(Debug)]
+pub struct UniqueProduct {
+  pub def: StructDef,
+  pub context: Arc<ArcSwap<EvalContext>>,
 }
 
 #[derive(Clone, Debug)]
@@ -132,6 +153,12 @@ impl PartialEq for Value {
       (Value::FnType(ll), Value::FnType(rr)) => ll == rr,
       (Value::ProductType(ll), Value::ProductType(rr)) => ll == rr,
       (Value::BuiltinType(ll), Value::BuiltinType(rr)) => ll == rr,
+      (Value::Unspecialized(ll), Value::Unspecialized(rr)) => match (ll, rr) {
+        (UnspecializedType::Product(ll), UnspecializedType::Product(rr)) => Arc::ptr_eq(ll, rr),
+        (UnspecializedType::Signal, UnspecializedType::Signal) => true,
+        (UnspecializedType::Uint, UnspecializedType::Uint) => true,
+        _ => false,
+      },
       _ => false,
     }
   }
@@ -159,7 +186,7 @@ pub struct UintValue {
 }
 
 impl Value {
-  /// Computes the type of a rank-0 `Value`.
+  /// Computes the type of a rank-0 or rank-1 `Value`.
   pub fn get_type(&self) -> Result<Arc<Value>> {
     Ok(match self {
       Value::UintValue(UintValue { bits, .. }) => {
@@ -170,7 +197,20 @@ impl Value {
         for (k, v) in &value.fields {
           fields.insert(k.clone(), v.get_type()?);
         }
-        Arc::new(Value::ProductType(ProductType { fields }))
+        Arc::new(Value::ProductType(ProductType {
+          fields,
+          unique: value.unique.clone(),
+        }))
+      }
+      Value::SpecializedFnValue(value) => Arc::new(Value::FnType(value.ty.clone())),
+      Value::ProductType(ty) => Arc::new(Value::Unspecialized(UnspecializedType::Product(
+        ty.unique.clone(),
+      ))),
+      Value::BuiltinType(BuiltinType::Uint { .. }) => {
+        Arc::new(Value::Unspecialized(UnspecializedType::Uint))
+      }
+      Value::BuiltinType(BuiltinType::Signal { .. }) => {
+        Arc::new(Value::Unspecialized(UnspecializedType::Signal))
       }
       _ => return Err(EvalError::GetTypeForValueOfUnknownType.into()),
     })
@@ -212,13 +252,35 @@ impl Value {
   }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct SpecializedFnType {
   /// Value of type arguments.
   pub tyargs: BTreeMap<Identifier, Arc<Value>>,
   pub args: Vec<SpecializedFnArg>,
   pub ret: Option<Arc<Value>>,
 }
+
+impl PartialEq for SpecializedFnType {
+  fn eq(&self, other: &SpecializedFnType) -> bool {
+    if self.ret != other.ret {
+      return false;
+    }
+
+    if self.args.len() != other.args.len() {
+      return false;
+    }
+
+    for (ll, rr) in self.args.iter().zip(other.args.iter()) {
+      if ll.ty != rr.ty {
+        return false;
+      }
+    }
+
+    return true;
+  }
+}
+
+impl Eq for SpecializedFnType {}
 
 #[derive(Debug)]
 pub struct UnspecializedFnValue {
@@ -234,22 +296,42 @@ pub struct SpecializedFnValue {
   pub context: Arc<ArcSwap<EvalContext>>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct SpecializedFnArg {
   pub name: Identifier,
   pub ty: Arc<Value>,
   pub default_value: Option<Arc<Value>>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct ProductValue {
   pub fields: BTreeMap<Arc<str>, Arc<Value>>,
+  pub unique: Arc<UniqueProduct>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+impl PartialEq for ProductValue {
+  fn eq(&self, other: &ProductValue) -> bool {
+    // Same unique root & same field values
+    Arc::ptr_eq(&self.unique, &other.unique) && self.fields == other.fields
+  }
+}
+
+impl Eq for ProductValue {}
+
+#[derive(Clone, Debug)]
 pub struct ProductType {
   pub fields: BTreeMap<Arc<str>, Arc<Value>>,
+  pub unique: Arc<UniqueProduct>,
 }
+
+impl PartialEq for ProductType {
+  fn eq(&self, other: &ProductType) -> bool {
+    // Same unique root & same field specialization
+    Arc::ptr_eq(&self.unique, &other.unique) && self.fields == other.fields
+  }
+}
+
+impl Eq for ProductType {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BuiltinType {
@@ -273,15 +355,25 @@ impl EvalContext {
   fn lookup_name(&self, x: &Identifier) -> Result<Arc<Value>> {
     match self.names.get(&x.0) {
       Some(x) => Ok(x.clone()),
-      None => Err(EvalError::IdentifierNotFound(x.0.clone()).into()),
+      None => {
+        debug!(
+          "identifier not found. all identifiers: {:?}",
+          self.names.iter().map(|x| x.0).collect::<Vec<_>>()
+        );
+        Err(EvalError::IdentifierNotFound(x.0.clone()).into())
+      }
     }
   }
 
   fn compute_tyassigns(
-    &mut self,
+    &self,
+    native_context: &mut EvalContext,
     tyassigns: &[TypeAssign],
     tyargs: &[TyArg],
   ) -> Result<BTreeMap<Identifier, Arc<Value>>> {
+    // Make a copy of our current context.
+    let mut this = self.clone();
+
     let named_tyassigns = tyassigns
       .iter()
       .filter_map(|x| x.ty.as_ref().map(|name| (name, &x.e)))
@@ -292,22 +384,24 @@ impl EvalContext {
     // Compute concrete values of type arguments.
     for (i, tyarg) in tyargs.iter().enumerate() {
       // Get the concrete type.
+      // This should be evaluated in the current context.
       let tyassign = tyassigns
         .get(i)
         .filter(|x| x.ty.is_none())
-        .map(|x| self.eval_expr(&x.e))
+        .map(|x| this.eval_expr(&x.e))
         .or_else(|| {
           named_tyassigns
             .get(&&tyarg.name)
-            .map(|x| self.eval_expr(*x))
+            .map(|x| this.eval_expr(*x))
         })
-        .or_else(|| tyarg.default_value.as_ref().map(|x| self.eval_expr(x)))
+        .or_else(|| tyarg.default_value.as_ref().map(|x| this.eval_expr(x)))
         .transpose()?
         .ok_or_else(|| EvalError::MissingTypeAssign)?;
 
       // Get the expected kind of the type.
+      // In the native context.
       let expected_kind = if let Some(kind) = &tyarg.kind {
-        Some(self.eval_expr(kind)?)
+        Some(native_context.eval_expr(kind)?)
       } else {
         None
       };
@@ -318,12 +412,21 @@ impl EvalContext {
       // Do they match?
       if let Some(expected_kind) = expected_kind {
         if expected_kind != actual_kind {
-          return Err(EvalError::TypeMismatch.into());
+          return Err(
+            EvalError::KindMismatch {
+              expected_kind,
+              actual_kind,
+            }
+            .into(),
+          );
         }
       }
 
       // Ok let's insert it
-      self
+      this
+        .names
+        .insert_mut(tyarg.name.0.clone(), tyassign.clone());
+      native_context
         .names
         .insert_mut(tyarg.name.0.clone(), tyassign.clone());
       tyarg_values.insert(tyarg.name.clone(), tyassign);
@@ -339,17 +442,16 @@ impl EvalContext {
   /// concrete function type like `fn(a: signal<uint<1>>, b: uint<8>) -> uint<9>`.
   pub fn specialize_fntype(
     &self,
+    mut native_context: EvalContext,
     meta: &FnMeta,
     tyassigns: &[TypeAssign],
   ) -> Result<SpecializedFnType> {
-    let mut this = self.clone();
-
-    let tyarg_values = this.compute_tyassigns(tyassigns, &meta.tyargs)?;
+    let tyarg_values = self.compute_tyassigns(&mut native_context, tyassigns, &meta.tyargs)?;
 
     // Compute concrete types of arguments.
     let mut args = Vec::new();
     for arg in meta.args.iter() {
-      let ty = this.eval_expr(&arg.ty)?;
+      let ty = native_context.eval_expr(&arg.ty)?;
       args.push(SpecializedFnArg {
         name: arg.name.clone(),
         ty,
@@ -363,7 +465,7 @@ impl EvalContext {
     let ret = meta
       .ret
       .as_ref()
-      .map(|x| this.eval_expr(&**x))
+      .map(|x| native_context.eval_expr(&**x))
       .transpose()?;
 
     return Ok(SpecializedFnType {
@@ -380,18 +482,21 @@ impl EvalContext {
     tyassigns: &[TypeAssign],
   ) -> Result<Arc<Value>> {
     Ok(Arc::new(match ty {
-      UnspecializedType::Product(def, context) => {
+      UnspecializedType::Product(unique) => {
         // Specialize in its own context...
-        let mut specialization_context: EvalContext = (**context.load()).clone();
+        let mut specialization_context: EvalContext = (**unique.context.load()).clone();
 
-        specialization_context.compute_tyassigns(tyassigns, &def.tyargs)?;
+        self.compute_tyassigns(&mut specialization_context, tyassigns, &unique.def.tyargs)?;
 
         let mut fields: BTreeMap<Arc<str>, Arc<Value>> = BTreeMap::new();
-        for (k, v) in def.fields.iter() {
+        for (k, v) in unique.def.fields.iter() {
           let ty = specialization_context.eval_expr(v)?;
           fields.insert(k.clone(), ty);
         }
-        Value::ProductType(ProductType { fields })
+        Value::ProductType(ProductType {
+          fields,
+          unique: unique.clone(),
+        })
       }
       UnspecializedType::Uint => {
         if tyassigns.len() == 0 {
@@ -457,6 +562,33 @@ impl EvalContext {
             bits: Some(1),
           })
         }
+        "and" | "or" => {
+          let right = args.get(0).ok_or_else(|| EvalError::MissingArgument)?;
+
+          let result = match &*id.0 {
+            "and" => {
+              if base.truthy()? {
+                self.eval_expr(right)?.truthy()?
+              } else {
+                false
+              }
+            }
+            "or" => {
+              if !base.truthy()? {
+                self.eval_expr(right)?.truthy()?
+              } else {
+                true
+              }
+            }
+            _ => unreachable!(),
+          };
+          let value = if result { 1u32 } else { 0u32 };
+
+          Value::UintValue(UintValue {
+            value: BigUint::from(value),
+            bits: Some(1),
+          })
+        }
         "add" | "sub" | "mul" | "div" => {
           let right = args.get(0).ok_or_else(|| EvalError::MissingArgument)?;
           let right = self.eval_expr(right)?;
@@ -510,6 +642,7 @@ impl EvalContext {
       }
     } else {
       // Call to a user-defined function
+      debug!("Evaluating call");
       let base = self.eval_expr(&base)?;
       let mut arg_values = Vec::with_capacity(args.len());
       for e in args.iter() {
@@ -550,14 +683,18 @@ impl EvalContext {
         let base = self.eval_expr(&base)?;
         match &*base {
           // A rank-2 unspecialized type.
-          Value::Unspecialized(ty) => return Ok(self.specialize_type(ty, &*tyassigns)?),
+          Value::Unspecialized(ty) => {
+            let specialized = self.specialize_type(ty, &*tyassigns)?;
+            debug!("specialized {:?} -> {:?}", ty, specialized);
+            return Ok(specialized);
+          }
 
           // A rank-0 function value with unspecialized signature.
           // The only place where this is allowed is a top-level function -
           // TODO: Check and error otherwise.
           Value::UnspecializedFnValue(value) => {
-            let context = value.context.load();
-            let ty = context.specialize_fntype(&value.ty, &*tyassigns)?;
+            let native_context = value.context.load();
+            let ty = self.specialize_fntype((**native_context).clone(), &value.ty, &*tyassigns)?;
             Value::SpecializedFnValue(SpecializedFnValue {
               ty,
               body: value.body.clone(),
@@ -572,6 +709,10 @@ impl EvalContext {
       }
       ExprV::Call { base, args } => {
         return Ok(self.eval_call(&*base, &*args)?);
+      }
+      ExprV::Fn(meta) => {
+        let ty = self.specialize_fntype(self.clone(), meta, &[])?;
+        Value::FnType(ty)
       }
       _ => {
         return Err(EvalError::ExprNotImplemented(e.clone()).into());
@@ -697,6 +838,20 @@ impl EvalContext {
       return Err(EvalError::ArgumentCountMismatch.into());
     }
 
+    // Typeck
+    for (value, arg_info) in args.iter().zip(target.ty.args.iter()) {
+      let ty = value.get_type()?;
+      if ty != arg_info.ty {
+        return Err(
+          EvalError::ArgumentTypeMismatch {
+            expected: arg_info.ty.clone(),
+            actual: ty,
+          }
+          .into(),
+        );
+      }
+    }
+
     // Derive a callee context.
     let mut callee_ctx = (**target.context.load()).clone();
 
@@ -711,6 +866,11 @@ impl EvalContext {
         .names
         .insert_mut(arg.name.0.clone(), args[i].clone());
     }
+
+    debug!(
+      "call_function with context: {:?}",
+      callee_ctx.names.iter().map(|x| x.0).collect::<Vec<_>>()
+    );
 
     // Select body.
     // TODO: Should this be done before runtime parameter evaluation?
@@ -737,7 +897,13 @@ impl EvalContext {
     // Implicitly ignore the return type if nothing is expected
     if target.ty.ret.is_some() {
       if target.ty.ret != actual_ret_type {
-        return Err(EvalError::ReturnTypeMismatch.into());
+        return Err(
+          EvalError::ReturnTypeMismatch {
+            expected: target.ty.ret.as_ref().unwrap().clone(),
+            actual: actual_ret_type,
+          }
+          .into(),
+        );
       }
       return Ok(retval.unwrap());
     } else {

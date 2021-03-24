@@ -1,3 +1,10 @@
+#[cfg(not(target_env = "msvc"))]
+use jemallocator::Jemalloc;
+
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL_ALLOCATOR: Jemalloc = Jemalloc;
+
 use std::fs::read_to_string;
 use std::sync::Arc;
 
@@ -5,12 +12,16 @@ use anyhow::Result;
 use arc_swap::ArcSwap;
 use nexthdl::{
   ast::{ModuleDef, ModuleItem},
-  eval::{EvalContext, SpecializedFnValue, UnspecializedFnValue, UnspecializedType, Value},
+  eval::{
+    EvalContext, SpecializedFnValue, UniqueProduct, UnspecializedFnValue, UnspecializedType, Value,
+  },
   parser::state::State,
   util::mk_arc_str,
 };
 
 fn main() -> Result<()> {
+  pretty_env_logger::init();
+
   let f = read_to_string(&std::env::args().nth(1).unwrap())?;
   let parser = nexthdl::parser::grammar::ModuleDefParser::new();
   let mut state = State::new();
@@ -33,10 +44,12 @@ fn main() -> Result<()> {
   for item in ast.items.iter() {
     match item {
       ModuleItem::Struct(def) => {
-        let value = Arc::new(Value::Unspecialized(UnspecializedType::Product(
-          def.clone(),
-          top_level_context.clone(),
-        )));
+        let value = Arc::new(Value::Unspecialized(UnspecializedType::Product(Arc::new(
+          UniqueProduct {
+            def: def.clone(),
+            context: top_level_context.clone(),
+          },
+        ))));
         ctx.names.insert_mut(def.name.0.clone(), value);
       }
       _ => {}
@@ -54,7 +67,7 @@ fn main() -> Result<()> {
             context: top_level_context.clone(),
           }))
         } else {
-          let ty = ctx.specialize_fntype(&def.meta, &[])?;
+          let ty = ctx.specialize_fntype(ctx.clone(), &def.meta, &[])?;
           Arc::new(Value::SpecializedFnValue(SpecializedFnValue {
             ty,
             body: def.specializations.clone(),
