@@ -10,6 +10,7 @@ use crate::ast::{
   Expr, ExprV, FnMeta, FnSpecialization, Identifier, LiteralV, Stmt, StmtV, StructDef, TyArg,
   TypeAssign,
 };
+use crate::util::mk_arc_str;
 use std::convert::TryFrom;
 
 #[derive(Error, Debug)]
@@ -88,6 +89,9 @@ pub enum EvalError {
 
   #[error("type has no true value: {0:?}")]
   TypeHasNoTrueValue(Arc<Value>),
+
+  #[error("operation '{optype}' not supported on value {value:?}")]
+  OperationNotSupported { optype: Arc<str>, value: Arc<Value> },
 
   #[error("not implemented: {0}")]
   NotImplemented(&'static str),
@@ -247,13 +251,17 @@ impl Value {
           _ => return Err(EvalError::BadCast.into()),
         };
         if let Some(target_bits) = *bits {
-          let value_bits = value.bits();
-          for i in (target_bits as u64)..value_bits {
-            value.set_bit(i, false);
-          }
-          assert!(value.bits() <= target_bits as u64);
+          truncate_biguint(&mut value, target_bits as u64);
         }
         Ok(Arc::new(Value::UintValue(UintValue { bits: *bits, value })))
+      }
+      Value::BuiltinType(BuiltinType::String) => {
+        let value = match &**value {
+          Value::UintValue(UintValue { value, .. }) => mk_arc_str(&format!("{}", value)),
+          Value::StringValue(x) => x.clone(),
+          _ => return Err(EvalError::BadCast.into()),
+        };
+        Ok(Arc::new(Value::StringValue(value)))
       }
       _ => Err(EvalError::BadCast.into()),
     }
@@ -603,7 +611,21 @@ impl EvalContext {
       "add" | "sub" | "mul" | "div" => {
         let right = args.get(0).ok_or_else(|| EvalError::MissingArgument)?;
         let right = self.eval_expr(right)?;
+        let base_ty = base.get_type()?;
+        let right = base_ty.cast_to_this_type(&right)?;
         match (&**base, &*right) {
+          (Value::StringValue(ll), Value::StringValue(rr)) => match &*id.0 {
+            "add" => Value::StringValue(mk_arc_str(&format!("{}{}", ll, rr))),
+            _ => {
+              return Err(
+                EvalError::OperationNotSupported {
+                  optype: id.0.clone(),
+                  value: base.clone(),
+                }
+                .into(),
+              )
+            }
+          },
           (Value::UintValue(ll), Value::UintValue(rr)) => {
             let mut value = match &*id.0 {
               "add" => &ll.value + &rr.value,
@@ -616,13 +638,8 @@ impl EvalContext {
               _ => unreachable!(),
             };
 
-            // Truncate
             if let Some(target_bits) = ll.bits {
-              let value_bits = value.bits();
-              for i in (target_bits as u64)..value_bits {
-                value.set_bit(i, false);
-              }
-              assert!(value.bits() <= target_bits as u64);
+              truncate_biguint(&mut value, target_bits as u64);
             }
 
             Value::UintValue(UintValue {
@@ -945,4 +962,12 @@ impl EvalContext {
       })));
     }
   }
+}
+
+fn truncate_biguint(x: &mut BigUint, target_bits: u64) {
+  let value_bits = x.bits();
+  for i in (target_bits as u64)..value_bits {
+    x.set_bit(i, false);
+  }
+  assert!(x.bits() <= target_bits as u64);
 }
