@@ -159,10 +159,25 @@ ExprV_L1: ast::ExprV = {
   <id:Identifier> => ast::ExprV::Ident(id),
   <base:Expr_L1> Token<"."> <id:Identifier> => ast::ExprV::Dot { base: Arc::new(base), id },
   <base:Expr_L1> <tyassigns:TypeAssignList> => ast::ExprV::Specialize { base: Arc::new(base), tyassigns },
-  <base:Expr_L1> <args:ActualArgList<Expr_L1>> => {
+  <base:Expr_L1> <args:ActualArgList<Expr>> => {
     ast::ExprV::Call { base: Arc::new(base), args }
   },
   <b:Block> => ast::ExprV::Block(Arc::new(b)),
+};
+
+Expr_L2: ast::Expr = {
+  <v:ExprV_L2> => ast::Expr { v }
+};
+
+ExprV_L2: ast::ExprV = {
+  ExprV_L1,
+  //Token<"("> <inner:Expr_L2> Token<")"> => inner,
+  <left:Expr_L1> Token<"+"> <right:Expr_L1> => helper::gen_binop_call("add", left, right),
+  <left:Expr_L1> Token<"-"> <right:Expr_L1> => helper::gen_binop_call("sub", left, right),
+  <left:Expr_L1> Token<"*"> <right:Expr_L1> => helper::gen_binop_call("mul", left, right),
+  <left:Expr_L1> Token<"/"> <right:Expr_L1> => helper::gen_binop_call("div", left, right),
+  <left:Expr_L1> Token<"&&"> <right:Expr_L1> => helper::gen_binop_call("and", left, right),
+  <left:Expr_L1> Token<"||"> <right:Expr_L1> => helper::gen_binop_call("or", left, right),
 };
 
 Expr: ast::Expr = {
@@ -171,7 +186,7 @@ Expr: ast::Expr = {
 
 ExprV: ast::ExprV = {
   Token<"fn"> <meta:FnMeta> => ast::ExprV::Fn(meta),
-  ExprV_L1,
+  ExprV_L2,
 };
 
 Literal: ast::Literal = {

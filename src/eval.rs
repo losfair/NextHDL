@@ -528,128 +528,157 @@ impl EvalContext {
     }))
   }
 
-  /// Evaluates a `Call` expression..
+  fn eval_builtin_call(&self, base: &Arc<Value>, id: &Identifier, args: &[Expr]) -> Result<Option<Arc<Value>>> {
+    let value = match &*id.0 {
+      "eq" | "ne" | "lt" | "le" | "gt" | "ge" => {
+        let right = args.get(0).ok_or_else(|| EvalError::MissingArgument)?;
+        let right = self.eval_expr(right)?;
+
+        let value = match &*id.0 {
+          "eq" => *base == right,
+          "ne" => *base != right,
+          _ => {
+            let base_ty = base.get_type()?;
+            let right_ty = right.get_type()?;
+            if base_ty != right_ty {
+              return Err(EvalError::TypeMismatch.into());
+            }
+
+            match &*id.0 {
+              "lt" => *base < right,
+              "le" => *base <= right,
+              "gt" => *base > right,
+              "ge" => *base >= right,
+              _ => unreachable!(),
+            }
+          }
+        };
+        let value = if value { 1u32 } else { 0u32 };
+        Value::UintValue(UintValue {
+          value: BigUint::from(value),
+          bits: Some(1),
+        })
+      }
+      "and" | "or" => {
+        let right = args.get(0).ok_or_else(|| EvalError::MissingArgument)?;
+
+        let result = match &*id.0 {
+          "and" => {
+            if base.truthy()? {
+              self.eval_expr(right)?.truthy()?
+            } else {
+              false
+            }
+          }
+          "or" => {
+            if !base.truthy()? {
+              self.eval_expr(right)?.truthy()?
+            } else {
+              true
+            }
+          }
+          _ => unreachable!(),
+        };
+        let value = if result { 1u32 } else { 0u32 };
+
+        Value::UintValue(UintValue {
+          value: BigUint::from(value),
+          bits: Some(1),
+        })
+      }
+      "add" | "sub" | "mul" | "div" => {
+        let right = args.get(0).ok_or_else(|| EvalError::MissingArgument)?;
+        let right = self.eval_expr(right)?;
+        match (&**base, &*right) {
+          (Value::UintValue(ll), Value::UintValue(rr)) => {
+            let mut value = match &*id.0 {
+              "add" => &ll.value + &rr.value,
+              "sub" => &ll.value - &rr.value,
+              "mul" => &ll.value * &rr.value,
+              "div" => ll
+                .value
+                .checked_div(&rr.value)
+                .ok_or_else(|| EvalError::DivByZero)?,
+              _ => unreachable!(),
+            };
+
+            // Truncate
+            if let Some(target_bits) = ll.bits {
+              let value_bits = value.bits();
+              for i in (target_bits as u64)..value_bits {
+                value.set_bit(i, false);
+              }
+              assert!(value.bits() <= target_bits as u64);
+            }
+
+            Value::UintValue(UintValue {
+              value,
+              bits: ll.bits,
+            })
+          }
+          _ => return Err(EvalError::TypeMismatch.into()),
+        }
+      }
+      "select" => {
+        let on_true = args.get(0).ok_or_else(|| EvalError::MissingArgument)?;
+        let on_false = args.get(1).ok_or_else(|| EvalError::MissingArgument)?;
+        let predicate = base.truthy()?;
+        if predicate {
+          return Ok(Some(self.eval_expr(on_true)?));
+        } else {
+          return Ok(Some(self.eval_expr(on_false)?));
+        }
+      }
+      "cast" => {
+        let target_type = args.get(0).ok_or_else(|| EvalError::MissingArgument)?;
+        let target_type = self.eval_expr(target_type)?;
+        let output = target_type.cast_to_this_type(&base)?;
+        return Ok(Some(output));
+      }
+      _ => return Ok(None)
+    };
+    Ok(Some(Arc::new(value)))
+  }
+
+  /// Evaluates a `Call` expression.
+  ///
+  /// Operator overloading is implicitly supported.
   fn eval_call(&self, base: &Expr, args: &[Expr]) -> Result<Arc<Value>> {
-    Ok(Arc::new(if let ExprV::Dot { base, id } = &base.v {
+    let base = if let ExprV::Dot { base, id } = &base.v {
       let base = self.eval_expr(&base)?;
-      match &*id.0 {
-        "eq" | "ne" | "lt" | "le" | "gt" | "ge" => {
-          let right = args.get(0).ok_or_else(|| EvalError::MissingArgument)?;
-          let right = self.eval_expr(right)?;
-
-          let value = match &*id.0 {
-            "eq" => base == right,
-            "ne" => base != right,
-            _ => {
-              let base_ty = base.get_type()?;
-              let right_ty = right.get_type()?;
-              if base_ty != right_ty {
-                return Err(EvalError::TypeMismatch.into());
-              }
-
-              match &*id.0 {
-                "lt" => base < right,
-                "le" => base <= right,
-                "gt" => base > right,
-                "ge" => base >= right,
-                _ => unreachable!(),
-              }
-            }
-          };
-          let value = if value { 1u32 } else { 0u32 };
-          Value::UintValue(UintValue {
-            value: BigUint::from(value),
-            bits: Some(1),
-          })
-        }
-        "and" | "or" => {
-          let right = args.get(0).ok_or_else(|| EvalError::MissingArgument)?;
-
-          let result = match &*id.0 {
-            "and" => {
-              if base.truthy()? {
-                self.eval_expr(right)?.truthy()?
-              } else {
-                false
-              }
-            }
-            "or" => {
-              if !base.truthy()? {
-                self.eval_expr(right)?.truthy()?
-              } else {
-                true
-              }
-            }
-            _ => unreachable!(),
-          };
-          let value = if result { 1u32 } else { 0u32 };
-
-          Value::UintValue(UintValue {
-            value: BigUint::from(value),
-            bits: Some(1),
-          })
-        }
-        "add" | "sub" | "mul" | "div" => {
-          let right = args.get(0).ok_or_else(|| EvalError::MissingArgument)?;
-          let right = self.eval_expr(right)?;
-          match (&*base, &*right) {
-            (Value::UintValue(ll), Value::UintValue(rr)) => {
-              let mut value = match &*id.0 {
-                "add" => &ll.value + &rr.value,
-                "sub" => &ll.value - &rr.value,
-                "mul" => &ll.value * &rr.value,
-                "div" => ll
-                  .value
-                  .checked_div(&rr.value)
-                  .ok_or_else(|| EvalError::DivByZero)?,
-                _ => unreachable!(),
-              };
-
-              // Truncate
-              if let Some(target_bits) = ll.bits {
-                let value_bits = value.bits();
-                for i in (target_bits as u64)..value_bits {
-                  value.set_bit(i, false);
-                }
-                assert!(value.bits() <= target_bits as u64);
-              }
-
-              Value::UintValue(UintValue {
-                value,
-                bits: ll.bits,
-              })
-            }
-            _ => return Err(EvalError::TypeMismatch.into()),
+      match self.eval_dot(&base, id) {
+        Ok(x) => x,
+        Err(direct_eval_error) => {
+          // Field not found. This can only be a builtin call.
+          match self.eval_builtin_call(&base, id, args)? {
+            Some(x) => return Ok(x),
+            None => return Err(direct_eval_error),
           }
         }
-        "select" => {
-          let on_true = args.get(0).ok_or_else(|| EvalError::MissingArgument)?;
-          let on_false = args.get(1).ok_or_else(|| EvalError::MissingArgument)?;
-          let predicate = base.truthy()?;
-          if predicate {
-            return Ok(self.eval_expr(on_true)?);
-          } else {
-            return Ok(self.eval_expr(on_false)?);
-          }
-        }
-        "cast" => {
-          let target_type = args.get(0).ok_or_else(|| EvalError::MissingArgument)?;
-          let target_type = self.eval_expr(target_type)?;
-          let output = target_type.cast_to_this_type(&base)?;
-          return Ok(output);
-        }
-        _ => return Err(EvalError::UnknownBuiltinCall(id.0.clone()).into()),
       }
     } else {
-      // Call to a user-defined function
-      debug!("Evaluating call");
-      let base = self.eval_expr(&base)?;
-      let mut arg_values = Vec::with_capacity(args.len());
-      for e in args.iter() {
-        arg_values.push(self.eval_expr(e)?);
+      self.eval_expr(&base)?
+    };
+    let mut arg_values = Vec::with_capacity(args.len());
+    for e in args.iter() {
+      arg_values.push(self.eval_expr(e)?);
+    }
+    return Ok(Self::call_function(base, &arg_values)?);
+  }
+
+  fn eval_dot(&self, base: &Arc<Value>, id: &Identifier) -> Result<Arc<Value>> {
+    match &**base {
+      Value::ProductValue(ref product_value) => {
+        let field = product_value
+          .fields
+          .get(&id.0)
+          .ok_or_else(|| EvalError::FieldNotFound)?;
+        Ok(field.clone())
       }
-      return Ok(Self::call_function(base, &arg_values)?);
-    }))
+      _ => {
+        Err(EvalError::DotOnNonProductValue.into())
+      }
+    }
   }
 
   /// Evaluates an `Expr` and produces a `Value`.
@@ -666,18 +695,7 @@ impl EvalContext {
       }
       ExprV::Dot { base, id } => {
         let base = self.eval_expr(&base)?;
-        match &*base {
-          Value::ProductValue(ref product_value) => {
-            let field = product_value
-              .fields
-              .get(&id.0)
-              .ok_or_else(|| EvalError::FieldNotFound)?;
-            return Ok(field.clone());
-          }
-          _ => {
-            return Err(EvalError::DotOnNonProductValue.into());
-          }
-        }
+        return self.eval_dot(&base, id);
       }
       ExprV::Specialize { base, tyassigns } => {
         let base = self.eval_expr(&base)?;

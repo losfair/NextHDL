@@ -1,7 +1,8 @@
 use super::error::LocalParseError;
-use crate::ast;
+use crate::{ast::{self, Expr, ExprV}, util::{mk_arc_str, mk_arc_slice}};
 use lalrpop_util::ParseError;
 use num_bigint::BigUint;
+use std::sync::Arc;
 
 pub fn parse_radix_prefixed_str<L, T>(
   s: &str,
@@ -15,4 +16,14 @@ pub fn parse_radix_prefixed_str<L, T>(
     .ok_or_else(|| ParseError::User {
       error: LocalParseError::InvalidLiteral,
     })
+}
+
+pub fn gen_binop_call(name: &str, left: Expr, right: Expr) -> ExprV {
+  ast::ExprV::Call {
+    base: Arc::new(ast::Expr { v: ast::ExprV::Dot {
+      base: Arc::new(left),
+      id: ast::Identifier(mk_arc_str(name)),
+    } }),
+    args: mk_arc_slice(std::iter::once(right)),
+  }
 }
