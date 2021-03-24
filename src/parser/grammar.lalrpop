@@ -130,7 +130,7 @@ StmtV: ast::StmtV = {
     if_body,
     else_body: Some(else_body),
   },
-  <left:Identifier> Token<"="> <right:Expr> => ast::StmtV::Assign { left, right },
+  <left:Identifier> Token<"="> <right:Expr> Token<";"> => ast::StmtV::Assign { left, right },
   <e:Expr> Token<";"> => ast::StmtV::Expr { e },
   <mut e:Expr> <b:Block> Token<";">? => {
     let b = ast::Expr { v: ast::ExprV::Block(Arc::new(b)) };
@@ -150,19 +150,29 @@ StmtV: ast::StmtV = {
   }
 }
 
+Expr_L0: ast::Expr = {
+  <v:ExprV_L0> => ast::Expr { v }
+};
+
+ExprV_L0: ast::ExprV = {
+  <l:Literal> => ast::ExprV::Lit(l),
+  <id:Identifier> => ast::ExprV::Ident(id),
+  <base:Expr_L0> Token<"."> <id:Identifier> => ast::ExprV::Dot { base: Arc::new(base), id },
+  <base:Expr_L0> <tyassigns:TypeAssignList> => ast::ExprV::Specialize { base: Arc::new(base), tyassigns },
+  <base:Expr_L0> <args:ActualArgList<Expr>> => {
+    ast::ExprV::Call { base: Arc::new(base), args }
+  },
+  Token<"("> <inner:ExprV> Token<")"> => inner,
+  <b:Block> => ast::ExprV::Block(Arc::new(b)),
+};
+
 Expr_L1: ast::Expr = {
   <v:ExprV_L1> => ast::Expr { v }
 };
 
 ExprV_L1: ast::ExprV = {
-  <l:Literal> => ast::ExprV::Lit(l),
-  <id:Identifier> => ast::ExprV::Ident(id),
-  <base:Expr_L1> Token<"."> <id:Identifier> => ast::ExprV::Dot { base: Arc::new(base), id },
-  <base:Expr_L1> <tyassigns:TypeAssignList> => ast::ExprV::Specialize { base: Arc::new(base), tyassigns },
-  <base:Expr_L1> <args:ActualArgList<Expr>> => {
-    ast::ExprV::Call { base: Arc::new(base), args }
-  },
-  <b:Block> => ast::ExprV::Block(Arc::new(b)),
+  ExprV_L0,
+  Token<"<"> <dsttype:Expr> Token<">"> <base:Expr_L0> => helper::gen_binop_call("cast", base, dsttype),
 };
 
 Expr_L2: ast::Expr = {
@@ -171,13 +181,40 @@ Expr_L2: ast::Expr = {
 
 ExprV_L2: ast::ExprV = {
   ExprV_L1,
-  //Token<"("> <inner:Expr_L2> Token<")"> => inner,
-  <left:Expr_L1> Token<"+"> <right:Expr_L1> => helper::gen_binop_call("add", left, right),
-  <left:Expr_L1> Token<"-"> <right:Expr_L1> => helper::gen_binop_call("sub", left, right),
-  <left:Expr_L1> Token<"*"> <right:Expr_L1> => helper::gen_binop_call("mul", left, right),
-  <left:Expr_L1> Token<"/"> <right:Expr_L1> => helper::gen_binop_call("div", left, right),
-  <left:Expr_L1> Token<"&&"> <right:Expr_L1> => helper::gen_binop_call("and", left, right),
-  <left:Expr_L1> Token<"||"> <right:Expr_L1> => helper::gen_binop_call("or", left, right),
+  <left:Expr_L2> Token<"*"> <right:Expr_L1> => helper::gen_binop_call("mul", left, right),
+  <left:Expr_L2> Token<"/"> <right:Expr_L1> => helper::gen_binop_call("div", left, right),
+};
+
+Expr_L3: ast::Expr = {
+  <v:ExprV_L3> => ast::Expr { v }
+};
+
+ExprV_L3: ast::ExprV = {
+  ExprV_L2,
+  <left:Expr_L3> Token<"+"> <right:Expr_L2> => helper::gen_binop_call("add", left, right),
+  <left:Expr_L3> Token<"-"> <right:Expr_L2> => helper::gen_binop_call("sub", left, right),
+  <left:Expr_L3> Token<"&"> <right:Expr_L2> => helper::gen_binop_call("bitand", left, right),
+  <left:Expr_L3> Token<"|"> <right:Expr_L2> => helper::gen_binop_call("bitor", left, right),
+};
+
+Expr_L4: ast::Expr = {
+  <v:ExprV_L4> => ast::Expr { v }
+};
+
+ExprV_L4: ast::ExprV = {
+  ExprV_L3,
+  <left:Expr_L4> Token<"=="> <right:Expr_L3> => helper::gen_binop_call("eq", left, right),
+  <left:Expr_L4> Token<"!="> <right:Expr_L3> => helper::gen_binop_call("ne", left, right),
+};
+
+Expr_L5: ast::Expr = {
+  <v:ExprV_L5> => ast::Expr { v }
+};
+
+ExprV_L5: ast::ExprV = {
+  ExprV_L4,
+  <left:Expr_L5> Token<"&&"> <right:Expr_L4> => helper::gen_binop_call("logicand", left, right),
+  <left:Expr_L5> Token<"||"> <right:Expr_L4> => helper::gen_binop_call("logicor", left, right),
 };
 
 Expr: ast::Expr = {
@@ -185,8 +222,8 @@ Expr: ast::Expr = {
 };
 
 ExprV: ast::ExprV = {
+  ExprV_L5,
   Token<"fn"> <meta:FnMeta> => ast::ExprV::Fn(meta),
-  ExprV_L2,
 };
 
 Literal: ast::Literal = {

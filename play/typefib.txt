@@ -1,13 +1,13 @@
 fn entry() -> uint<32> {
-  typefib<32, 30.cast(uint<32>)>();
+  typefib<32, <uint<32>>30>();
 }
 
 fn typefib<W: uint<>, N: uint<W>>() -> uint<W>
-  where N.eq(1).or(N.eq(2))
+  where N == 1 || N == 2
 {
-  1.cast(uint<W>);
+  <uint<W>>1;
 }
   default
 {
-  typefib<W, N.sub(1)>().add(typefib<W, N.sub(2)>());
+  typefib<W, N - 1>() + typefib<W, N - 2>();
 }

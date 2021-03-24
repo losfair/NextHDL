@@ -528,7 +528,12 @@ impl EvalContext {
     }))
   }
 
-  fn eval_builtin_call(&self, base: &Arc<Value>, id: &Identifier, args: &[Expr]) -> Result<Option<Arc<Value>>> {
+  fn eval_builtin_call(
+    &self,
+    base: &Arc<Value>,
+    id: &Identifier,
+    args: &[Expr],
+  ) -> Result<Option<Arc<Value>>> {
     let value = match &*id.0 {
       "eq" | "ne" | "lt" | "le" | "gt" | "ge" => {
         let right = args.get(0).ok_or_else(|| EvalError::MissingArgument)?;
@@ -559,18 +564,18 @@ impl EvalContext {
           bits: Some(1),
         })
       }
-      "and" | "or" => {
+      "logicand" | "logicor" => {
         let right = args.get(0).ok_or_else(|| EvalError::MissingArgument)?;
 
         let result = match &*id.0 {
-          "and" => {
+          "logicand" => {
             if base.truthy()? {
               self.eval_expr(right)?.truthy()?
             } else {
               false
             }
           }
-          "or" => {
+          "logicor" => {
             if !base.truthy()? {
               self.eval_expr(right)?.truthy()?
             } else {
@@ -635,7 +640,7 @@ impl EvalContext {
         let output = target_type.cast_to_this_type(&base)?;
         return Ok(Some(output));
       }
-      _ => return Ok(None)
+      _ => return Ok(None),
     };
     Ok(Some(Arc::new(value)))
   }
@@ -675,9 +680,7 @@ impl EvalContext {
           .ok_or_else(|| EvalError::FieldNotFound)?;
         Ok(field.clone())
       }
-      _ => {
-        Err(EvalError::DotOnNonProductValue.into())
-      }
+      _ => Err(EvalError::DotOnNonProductValue.into()),
     }
   }
 

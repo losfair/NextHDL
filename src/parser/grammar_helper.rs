@@ -1,5 +1,8 @@
 use super::error::LocalParseError;
-use crate::{ast::{self, Expr, ExprV}, util::{mk_arc_str, mk_arc_slice}};
+use crate::{
+  ast::{self, Expr, ExprV},
+  util::{mk_arc_slice, mk_arc_str},
+};
 use lalrpop_util::ParseError;
 use num_bigint::BigUint;
 use std::sync::Arc;
@@ -20,10 +23,12 @@ pub fn parse_radix_prefixed_str<L, T>(
 
 pub fn gen_binop_call(name: &str, left: Expr, right: Expr) -> ExprV {
   ast::ExprV::Call {
-    base: Arc::new(ast::Expr { v: ast::ExprV::Dot {
-      base: Arc::new(left),
-      id: ast::Identifier(mk_arc_str(name)),
-    } }),
+    base: Arc::new(ast::Expr {
+      v: ast::ExprV::Dot {
+        base: Arc::new(left),
+        id: ast::Identifier(mk_arc_str(name)),
+      },
+    }),
     args: mk_arc_slice(std::iter::once(right)),
   }
 }
