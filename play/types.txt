@@ -1,0 +1,16 @@
+fn entry() -> uint<16> {
+  let x = add_const<32>(3.cast(uint<32>), 50.cast(uint<32>));
+  apply<uint<32>, uint<16>>(x, truncate<32, 16>);
+}
+
+fn apply<T: uint, U: uint>(a: T, f: fn (_: T) -> U) -> U {
+  f(a);
+}
+
+fn truncate<From: uint<>, To: uint<>>(from: uint<From>) -> uint<To> {
+  from.cast(uint<To>);
+}
+
+fn add_const<N: uint<>>(a: uint<N>, b: uint<N>) -> uint<N> {
+  a.add(b);
+}
