@@ -1,0 +1,11 @@
+fn entry() -> uint<32> {
+  fib(<uint<32>>30);
+}
+
+fn fib(n: uint<32>) -> uint<32> {
+  if n == 1 || n == 2 {
+    <uint<32>>1;
+  } else {
+    fib(n - 1) + fib(n - 2);
+  }
+}
