@@ -50,19 +50,19 @@ MaybeFnSpecializations: Arc<[ast::FnSpecialization]> = {
   <w:FnSpecializationWhere*> <d:FnSpecializationDefault> => {
     mk_arc_slice(w.into_iter().chain(std::iter::once(d)))
   },
-  <body:FnBody> => mk_arc_slice(std::iter::once(ast::FnSpecialization { where_expr: None, body })),
+  <body:Body> => mk_arc_slice(std::iter::once(ast::FnSpecialization { where_expr: None, body })),
 };
 
 FnSpecializationWhere: ast::FnSpecialization = {
-  Token<"where"> <e:Expr> <body:FnBody> => ast::FnSpecialization { where_expr: Some(e), body },
+  Token<"where"> <e:Expr> <body:Body> => ast::FnSpecialization { where_expr: Some(e), body },
 };
 
 FnSpecializationDefault: ast::FnSpecialization = {
-  Token<"default"> <body:FnBody> => ast::FnSpecialization { where_expr: None, body },
+  Token<"default"> <body:Body> => ast::FnSpecialization { where_expr: None, body },
 };
 
-FnBody: ast::FnBody = {
-  Token<"{"> <body:Body> Token<"}"> => ast::FnBody { body },
+Body: ast::Body = {
+  <loc_start:@L> Token<"{"> <body:PlainBody> Token<"}"> <loc_end:@R> => ast::Body { body, loc_start, loc_end },
 };
 
 FnMeta: ast::FnMeta = {
@@ -109,11 +109,11 @@ ActualArgList<I>: Arc<[ast::Expr]> = {
 };
 
 Block: ast::Block = {
-  Token<"{"> <args:FnArgList> Token<"in"> <body:Body> Token<"}"> => ast::Block { args, body },
-  Token<"{"> <body:Body> Token<"}"> => ast::Block { args: mk_arc_slice(std::iter::empty()), body },
+  Token<"{"> <args:FnArgList> Token<"in"> <body:PlainBody> Token<"}"> => ast::Block { args, body },
+  Token<"{"> <body:PlainBody> Token<"}"> => ast::Block { args: mk_arc_slice(std::iter::empty()), body },
 };
 
-Body: Arc<[ast::Stmt]> = {
+PlainBody: Arc<[ast::Stmt]> = {
   <v:Stmt*> => mk_arc_slice(v.into_iter()),
 };
 
@@ -124,35 +124,41 @@ Stmt: ast::Stmt = {
 StmtV: ast::StmtV = {
   Token<"let"> <def:GenericDef> Token<";"> => ast::StmtV::Let { def },
   Token<"signal"> <def:GenericDef> Token<";"> => ast::StmtV::Signal { def },
-  Token<"if"> <e:Expr> Token<"{"> <if_body:Body> Token<"}"> => ast::StmtV::IfElse { condition: e, if_body, else_body: None },
-  Token<"if"> <e:Expr> Token<"{"> <if_body:Body> Token<"}"> Token<"else"> Token<"{"> <else_body:Body> Token<"}"> => ast::StmtV::IfElse {
+  Token<"if"> <e:Expr> <if_body:Body> => ast::StmtV::IfElse { condition: e, if_body, else_body: None },
+  Token<"if"> <e:Expr> <if_body:Body> Token<"else"> <else_body:Body> => ast::StmtV::IfElse {
     condition: e,
     if_body,
     else_body: Some(else_body),
   },
   <left:Identifier> Token<"="> <right:Expr> Token<";"> => ast::StmtV::Assign { left, right },
   <e:Expr> Token<";"> => ast::StmtV::Expr { e },
-  <mut e:Expr> <b:Block> Token<";">? => {
-    let b = ast::Expr { v: ast::ExprV::Block(Arc::new(b)) };
+  <mut e:Expr> <block_start:@L> <b:Block> <block_end:@R> Token<";">? => {
+    let b = ast::Expr { v: ast::ExprV::Block(Arc::new(b)), loc_start: block_start, loc_end: block_end };
     if let ast::ExprV::Call { ref mut args, .. } = e.v {
       *args = mk_arc_slice(args.take_all().chain(std::iter::once(b)));
+      e.loc_end = block_end;
       ast::StmtV::Expr { e }
     } else {
+      let loc_start = e.loc_start;
       ast::StmtV::Expr {
         e: ast::Expr {
           v: ast::ExprV::Call {
             base: Arc::new(e),
             args: mk_arc_slice(std::iter::once(b)),
           },
+          loc_start,
+          loc_end: block_end,
         },
       }
     }
   }
 }
 
-Expr_L0: ast::Expr = {
-  <v:ExprV_L0> => ast::Expr { v }
+Expr_Lx<V>: ast::Expr = {
+  <loc_start:@L> <v:V> <loc_end:@R> => ast::Expr { v, loc_start, loc_end }
 };
+
+Expr_L0: ast::Expr = Expr_Lx<ExprV_L0>;
 
 ExprV_L0: ast::ExprV = {
   <l:Literal> => ast::ExprV::Lit(l),
@@ -166,18 +172,14 @@ ExprV_L0: ast::ExprV = {
   <b:Block> => ast::ExprV::Block(Arc::new(b)),
 };
 
-Expr_L1: ast::Expr = {
-  <v:ExprV_L1> => ast::Expr { v }
-};
+Expr_L1: ast::Expr = Expr_Lx<ExprV_L1>;
 
 ExprV_L1: ast::ExprV = {
   ExprV_L0,
   Token<"<"> <dsttype:Expr> Token<">"> <base:Expr_L0> => helper::gen_binop_call(state, "cast", base, dsttype),
 };
 
-Expr_L2: ast::Expr = {
-  <v:ExprV_L2> => ast::Expr { v }
-};
+Expr_L2: ast::Expr = Expr_Lx<ExprV_L2>;
 
 ExprV_L2: ast::ExprV = {
   ExprV_L1,
@@ -185,9 +187,7 @@ ExprV_L2: ast::ExprV = {
   <left:Expr_L2> Token<"/"> <right:Expr_L1> => helper::gen_binop_call(state, "div", left, right),
 };
 
-Expr_L3: ast::Expr = {
-  <v:ExprV_L3> => ast::Expr { v }
-};
+Expr_L3: ast::Expr = Expr_Lx<ExprV_L3>;
 
 ExprV_L3: ast::ExprV = {
   ExprV_L2,
@@ -197,9 +197,7 @@ ExprV_L3: ast::ExprV = {
   <left:Expr_L3> Token<"|"> <right:Expr_L2> => helper::gen_binop_call(state, "bitor", left, right),
 };
 
-Expr_L4: ast::Expr = {
-  <v:ExprV_L4> => ast::Expr { v }
-};
+Expr_L4: ast::Expr = Expr_Lx<ExprV_L4>;
 
 ExprV_L4: ast::ExprV = {
   ExprV_L3,
@@ -207,9 +205,7 @@ ExprV_L4: ast::ExprV = {
   <left:Expr_L4> Token<"!="> <right:Expr_L3> => helper::gen_binop_call(state, "ne", left, right),
 };
 
-Expr_L5: ast::Expr = {
-  <v:ExprV_L5> => ast::Expr { v }
-};
+Expr_L5: ast::Expr = Expr_Lx<ExprV_L5>;
 
 ExprV_L5: ast::ExprV = {
   ExprV_L4,
@@ -217,9 +213,7 @@ ExprV_L5: ast::ExprV = {
   <left:Expr_L5> Token<"||"> <right:Expr_L4> => helper::gen_binop_call(state, "logicor", left, right),
 };
 
-Expr: ast::Expr = {
-  <v:ExprV> => ast::Expr { v }
-};
+Expr: ast::Expr = Expr_Lx<ExprV>;
 
 ExprV: ast::ExprV = {
   ExprV_L5,

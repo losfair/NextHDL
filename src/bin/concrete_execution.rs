@@ -16,6 +16,7 @@ use nexthdl::{
     EvalContext, SpecializedFnValue, UniqueProduct, UnspecializedFnValue, UnspecializedType, Value,
   },
   parser::state::State,
+  source_loc::SourceLocResolver,
   util::mk_arc_str,
 };
 
@@ -25,14 +26,18 @@ fn main() -> Result<()> {
   let f = read_to_string(&std::env::args().nth(1).unwrap())?;
   let parser = nexthdl::parser::grammar::ModuleDefParser::new();
   let mut state = State::new();
+
+  let mut source_loc_resolver = SourceLocResolver::new();
+  source_loc_resolver.prepare(&f);
+
   let ast: ModuleDef = parser.parse(&mut state, &f).unwrap();
 
   println!("{:#?}", ast);
 
-  let mut ctx = EvalContext::default();
+  let mut ctx = EvalContext::new();
 
   // Placeholder value for now
-  let top_level_context = Arc::new(ArcSwap::new(Arc::new(EvalContext::default())));
+  let top_level_context = Arc::new(ArcSwap::new(Arc::new(EvalContext::new())));
 
   // Insert builtin types
   ctx.names.insert_mut(
@@ -84,8 +89,18 @@ fn main() -> Result<()> {
   top_level_context.store(Arc::new(ctx.clone()));
 
   let entry = ctx.names.get("entry").expect("missing entry");
-  let ret = EvalContext::call_function(entry.clone(), &[])?;
-  println!("ret = {:?}", ret);
+  let ret = EvalContext::call_function(entry.clone(), &[], None);
+  match ret {
+    Ok(x) => {
+      println!("ret = {:?}", x);
+    }
+    Err(e) => {
+      println!("error = {:?}", e);
+      let stack = ctx.dump_stack();
+      let printer = source_loc_resolver.get_stack_dump_printer(&stack);
+      println!("{}", printer);
+    }
+  }
 
   Ok(())
 }

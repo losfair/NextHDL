@@ -4,7 +4,11 @@ use rpds::RedBlackTreeMapSync;
 use std::{collections::BTreeMap, sync::Arc};
 use thiserror::Error;
 
-use crate::util::mk_arc_str;
+use crate::{
+  ast::Body,
+  tracker::{EvalTracker, EvaluationStackEntry, EvaluationStackEntryType},
+  util::mk_arc_str,
+};
 use crate::{
   ast::{
     Expr, ExprV, FnMeta, FnSpecialization, Identifier, LiteralV, Stmt, StmtV, StructDef, TyArg,
@@ -123,11 +127,13 @@ pub enum EvalError {
   ExprNotImplemented(Expr),
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct EvalContext {
   /// All names in the current context. A persistent red-black tree is used for efficient
   /// scope nesting.
   pub names: RedBlackTreeMapSync<Arc<str>, Arc<Value>>,
+
+  pub tracker: Arc<EvalTracker>,
 }
 
 /// An unspecialized type. Contains zero or more unspecified type variables.
@@ -490,6 +496,17 @@ pub struct BlockContext {
 }
 
 impl EvalContext {
+  pub fn new() -> Self {
+    Self {
+      names: Default::default(),
+      tracker: Arc::new(EvalTracker::new()),
+    }
+  }
+
+  pub fn dump_stack(&self) -> Vec<EvaluationStackEntry> {
+    self.tracker.dump()
+  }
+
   fn lookup_name(&self, x: &Identifier) -> Result<Arc<Value>> {
     match self.names.get(&x.0) {
       Some(x) => Ok(x.clone()),
@@ -774,7 +791,7 @@ impl EvalContext {
   /// Evaluates a `Call` expression.
   ///
   /// Operator overloading is implicitly supported.
-  fn eval_call(&self, base: &Expr, args: &[Expr]) -> Result<Arc<Value>> {
+  fn eval_call(&self, base: &Expr, args: &[Expr], loc: (usize, usize)) -> Result<Arc<Value>> {
     let base = if let ExprV::Dot { base, id } = &base.v {
       let base = self.eval_expr(&base)?;
       match self.eval_dot(&base, id) {
@@ -794,7 +811,7 @@ impl EvalContext {
     for e in args.iter() {
       arg_values.push(self.eval_expr(e)?);
     }
-    return Ok(Self::call_function(base, &arg_values)?);
+    return Ok(Self::call_function(base, &arg_values, Some(loc))?);
   }
 
   fn eval_dot(&self, base: &Arc<Value>, id: &Identifier) -> Result<Arc<Value>> {
@@ -812,6 +829,10 @@ impl EvalContext {
 
   /// Evaluates an `Expr` and produces a `Value`.
   pub fn eval_expr(&self, e: &Expr) -> Result<Arc<Value>> {
+    let _tracker = self.tracker.enter(EvaluationStackEntry {
+      ty: EvaluationStackEntryType::Expression,
+      loc: Some((e.loc_start, e.loc_end)),
+    });
     let value = match &e.v {
       ExprV::Lit(x) => match x.v {
         LiteralV::Uint(ref value) => {
@@ -855,7 +876,7 @@ impl EvalContext {
         }
       }
       ExprV::Call { base, args } => {
-        return Ok(self.eval_call(&*base, &*args)?);
+        return Ok(self.eval_call(&*base, &*args, (e.loc_start, e.loc_end))?);
       }
       ExprV::Fn(meta) => {
         let ty = self.specialize_fntype(self.clone(), meta, &[])?;
@@ -930,10 +951,10 @@ impl EvalContext {
         let condition = self.eval_expr(condition)?;
         if let Some(x) = condition.const_truthy() {
           if x {
-            self.eval_stmt_sequence(&**if_body, Some(ctx))?;
+            self.eval_body(if_body, Some(ctx))?;
           } else {
             if let Some(else_body) = else_body {
-              self.eval_stmt_sequence(&**else_body, Some(ctx))?;
+              self.eval_body(else_body, Some(ctx))?;
             }
           }
         } else {
@@ -950,14 +971,19 @@ impl EvalContext {
     Ok(())
   }
 
-  pub fn eval_stmt_sequence(
+  pub fn eval_body(
     &mut self,
-    stmts: &[Stmt],
+    body: &Body,
     mut parent_ctx: Option<&mut BlockContext>,
   ) -> Result<Option<Arc<Value>>> {
+    let tracker = self.tracker.clone();
+    let _tracker_guard = tracker.enter(EvaluationStackEntry {
+      ty: EvaluationStackEntryType::Body,
+      loc: Some((body.loc_start, body.loc_end)),
+    });
     let mut ctx = BlockContext::default();
     let mut this = self.clone();
-    for stmt in stmts.iter() {
+    for stmt in body.body.iter() {
       this.eval_stmt(stmt, &mut ctx)?;
     }
     for (name, value) in ctx.updated_variables {
@@ -981,7 +1007,11 @@ impl EvalContext {
     Ok(ctx.last_result)
   }
 
-  pub fn call_function(target: Arc<Value>, args: &[Arc<Value>]) -> Result<Arc<Value>> {
+  pub fn call_function(
+    target: Arc<Value>,
+    args: &[Arc<Value>],
+    loc: Option<(usize, usize)>,
+  ) -> Result<Arc<Value>> {
     let target = match &*target {
       Value::SpecializedFnValue(value) => value,
       _ => return Err(EvalError::CallingNonCallable.into()),
@@ -1006,6 +1036,11 @@ impl EvalContext {
 
     // Derive a callee context.
     let mut callee_ctx = (**target.context.load()).clone();
+    let tracker = callee_ctx.tracker.clone();
+    let _tracker_guard = tracker.enter(EvaluationStackEntry {
+      ty: EvaluationStackEntryType::FunctionCall,
+      loc,
+    });
 
     // First, insert type parameters...
     for (k, v) in target.ty.tyargs.iter() {
@@ -1048,7 +1083,7 @@ impl EvalContext {
     let selected_spec = selected_spec.ok_or_else(|| EvalError::NoSpecializationSelected)?;
 
     // Run it!
-    let retval = callee_ctx.eval_stmt_sequence(&selected_spec.body.body, None)?;
+    let retval = callee_ctx.eval_body(&selected_spec.body, None)?;
     let actual_ret_type = retval.as_ref().map(|x| x.get_type()).transpose()?;
 
     // Implicitly ignore the return type if nothing is expected

@@ -50,12 +50,14 @@ pub struct FnDef {
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct FnSpecialization {
   pub where_expr: Option<Expr>,
-  pub body: FnBody,
+  pub body: Body,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct FnBody {
+pub struct Body {
   pub body: Arc<[Stmt]>,
+  pub loc_start: usize,
+  pub loc_end: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -93,8 +95,8 @@ pub enum StmtV {
   },
   IfElse {
     condition: Expr,
-    if_body: Arc<[Stmt]>,
-    else_body: Option<Arc<[Stmt]>>,
+    if_body: Body,
+    else_body: Option<Body>,
   },
   Assign {
     left: Identifier,
@@ -114,6 +116,8 @@ pub struct Block {
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Expr {
   pub v: ExprV,
+  pub loc_start: usize,
+  pub loc_end: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
