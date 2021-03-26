@@ -172,7 +172,7 @@ Expr_L1: ast::Expr = {
 
 ExprV_L1: ast::ExprV = {
   ExprV_L0,
-  Token<"<"> <dsttype:Expr> Token<">"> <base:Expr_L0> => helper::gen_binop_call("cast", base, dsttype),
+  Token<"<"> <dsttype:Expr> Token<">"> <base:Expr_L0> => helper::gen_binop_call(state, "cast", base, dsttype),
 };
 
 Expr_L2: ast::Expr = {
@@ -181,8 +181,8 @@ Expr_L2: ast::Expr = {
 
 ExprV_L2: ast::ExprV = {
   ExprV_L1,
-  <left:Expr_L2> Token<"*"> <right:Expr_L1> => helper::gen_binop_call("mul", left, right),
-  <left:Expr_L2> Token<"/"> <right:Expr_L1> => helper::gen_binop_call("div", left, right),
+  <left:Expr_L2> Token<"*"> <right:Expr_L1> => helper::gen_binop_call(state, "mul", left, right),
+  <left:Expr_L2> Token<"/"> <right:Expr_L1> => helper::gen_binop_call(state, "div", left, right),
 };
 
 Expr_L3: ast::Expr = {
@@ -191,10 +191,10 @@ Expr_L3: ast::Expr = {
 
 ExprV_L3: ast::ExprV = {
   ExprV_L2,
-  <left:Expr_L3> Token<"+"> <right:Expr_L2> => helper::gen_binop_call("add", left, right),
-  <left:Expr_L3> Token<"-"> <right:Expr_L2> => helper::gen_binop_call("sub", left, right),
-  <left:Expr_L3> Token<"&"> <right:Expr_L2> => helper::gen_binop_call("bitand", left, right),
-  <left:Expr_L3> Token<"|"> <right:Expr_L2> => helper::gen_binop_call("bitor", left, right),
+  <left:Expr_L3> Token<"+"> <right:Expr_L2> => helper::gen_binop_call(state, "add", left, right),
+  <left:Expr_L3> Token<"-"> <right:Expr_L2> => helper::gen_binop_call(state, "sub", left, right),
+  <left:Expr_L3> Token<"&"> <right:Expr_L2> => helper::gen_binop_call(state, "bitand", left, right),
+  <left:Expr_L3> Token<"|"> <right:Expr_L2> => helper::gen_binop_call(state, "bitor", left, right),
 };
 
 Expr_L4: ast::Expr = {
@@ -203,8 +203,8 @@ Expr_L4: ast::Expr = {
 
 ExprV_L4: ast::ExprV = {
   ExprV_L3,
-  <left:Expr_L4> Token<"=="> <right:Expr_L3> => helper::gen_binop_call("eq", left, right),
-  <left:Expr_L4> Token<"!="> <right:Expr_L3> => helper::gen_binop_call("ne", left, right),
+  <left:Expr_L4> Token<"=="> <right:Expr_L3> => helper::gen_binop_call(state, "eq", left, right),
+  <left:Expr_L4> Token<"!="> <right:Expr_L3> => helper::gen_binop_call(state, "ne", left, right),
 };
 
 Expr_L5: ast::Expr = {
@@ -213,8 +213,8 @@ Expr_L5: ast::Expr = {
 
 ExprV_L5: ast::ExprV = {
   ExprV_L4,
-  <left:Expr_L5> Token<"&&"> <right:Expr_L4> => helper::gen_binop_call("logicand", left, right),
-  <left:Expr_L5> Token<"||"> <right:Expr_L4> => helper::gen_binop_call("logicor", left, right),
+  <left:Expr_L5> Token<"&&"> <right:Expr_L4> => helper::gen_binop_call(state, "logicand", left, right),
+  <left:Expr_L5> Token<"||"> <right:Expr_L4> => helper::gen_binop_call(state, "logicor", left, right),
 };
 
 Expr: ast::Expr = {

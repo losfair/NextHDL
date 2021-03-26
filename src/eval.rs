@@ -1,16 +1,18 @@
 use anyhow::Result;
 use arc_swap::ArcSwap;
 use num_bigint::BigUint;
-use num_traits::ops::checked::CheckedDiv;
 use rpds::RedBlackTreeMapSync;
-use std::{cmp::Ordering, collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc};
 use thiserror::Error;
 
-use crate::ast::{
-  Expr, ExprV, FnMeta, FnSpecialization, Identifier, LiteralV, Stmt, StmtV, StructDef, TyArg,
-  TypeAssign,
-};
 use crate::util::mk_arc_str;
+use crate::{
+  ast::{
+    Expr, ExprV, FnMeta, FnSpecialization, Identifier, LiteralV, Stmt, StmtV, StructDef, TyArg,
+    TypeAssign,
+  },
+  symbol::SymbolicUint,
+};
 use std::convert::TryFrom;
 
 #[derive(Error, Debug)]
@@ -78,6 +80,12 @@ pub enum EvalError {
   #[error("no specialization selected")]
   NoSpecializationSelected,
 
+  #[error("value cannot be used for selection")]
+  ValueCannotBeUsedForSelection,
+
+  #[error("select type mismatch: left_value {left:?}, right_value {right:?}")]
+  SelectTypeMismatch { left: Arc<Value>, right: Arc<Value> },
+
   #[error("bad cast")]
   BadCast,
 
@@ -86,6 +94,19 @@ pub enum EvalError {
     expected_kind: Arc<Value>,
     actual_kind: Arc<Value>,
   },
+
+  #[error("uncomparable types: op {op}, left {left:?}, right {right:?}")]
+  UncomparableTypes {
+    op: Arc<str>,
+    left: Arc<Value>,
+    right: Arc<Value>,
+  },
+
+  #[error("bad selection arms: left {left:?}, right {right:?}")]
+  BadSelectionArms { left: Arc<Value>, right: Arc<Value> },
+
+  #[error("where arm cannot be statically evaluated: {condition:?}")]
+  NonStaticWhereArm { condition: Arc<Value> },
 
   #[error("type has no true value: {0:?}")]
   TypeHasNoTrueValue(Arc<Value>),
@@ -127,13 +148,13 @@ pub struct IdentPath(pub Arc<[Identifier]>);
 /// The output of some computation. Evaluating an `Expr` produces a `Value`.
 #[derive(Debug)]
 pub enum Value {
-  /// A rank-0 concrete `uint` value.
-  UintValue(UintValue),
+  /// A rank-0 `uint` value.
+  UintValue(SymbolicUint),
 
   /// A rank-0 concrete `string` value.
   StringValue(Arc<str>),
 
-  /// A rank-0 product (struct) value.
+  /// A rank-0 concrete product (struct) value.
   ProductValue(ProductValue),
 
   /// A rank-0 function value that is not yet specialized.
@@ -155,54 +176,165 @@ pub enum Value {
   Unspecialized(UnspecializedType),
 }
 
-impl PartialEq for Value {
-  fn eq(&self, other: &Value) -> bool {
-    match (self, other) {
-      (Value::UintValue(ll), Value::UintValue(rr)) => ll.value == rr.value,
-      (Value::StringValue(ll), Value::StringValue(rr)) => ll == rr,
-      (Value::ProductValue(ll), Value::ProductValue(rr)) => ll == rr,
-      (Value::FnType(ll), Value::FnType(rr)) => ll == rr,
-      (Value::ProductType(ll), Value::ProductType(rr)) => ll == rr,
-      (Value::BuiltinType(ll), Value::BuiltinType(rr)) => ll == rr,
-      (Value::Unspecialized(ll), Value::Unspecialized(rr)) => match (ll, rr) {
-        (UnspecializedType::Product(ll), UnspecializedType::Product(rr)) => Arc::ptr_eq(ll, rr),
-        (UnspecializedType::Signal, UnspecializedType::Signal) => true,
-        (UnspecializedType::Uint, UnspecializedType::Uint) => true,
-        _ => false,
-      },
-      _ => false,
+#[derive(Copy, Clone, Debug)]
+enum ValueOrdering {
+  Lt,
+  Gt,
+  Le,
+  Ge,
+}
+
+impl ValueOrdering {
+  fn get_comparator(&self) -> fn(_: SymbolicUint, _: SymbolicUint) -> SymbolicUint {
+    match self {
+      ValueOrdering::Lt => SymbolicUint::sym_lt,
+      ValueOrdering::Le => SymbolicUint::sym_le,
+      ValueOrdering::Gt => SymbolicUint::sym_gt,
+      ValueOrdering::Ge => SymbolicUint::sym_ge,
     }
   }
 }
 
+impl PartialEq for Value {
+  fn eq(&self, other: &Self) -> bool {
+    self.compare_eq(other).const_truthy().unwrap_or(false)
+  }
+}
+
+// NOT really Eq though. Only PartialEq.~
 impl Eq for Value {}
 
-impl PartialOrd for Value {
-  fn partial_cmp(&self, other: &Value) -> Option<Ordering> {
+impl Value {
+  fn compare_eq(&self, other: &Value) -> SymbolicUint {
     match (self, other) {
-      (Value::UintValue(ll), Value::UintValue(rr)) => ll.value.partial_cmp(&rr.value),
+      (Value::UintValue(ll), Value::UintValue(rr)) => ll.clone().sym_eq(rr.clone()),
+      (Value::StringValue(ll), Value::StringValue(rr)) => (ll == rr).into(),
+      (Value::ProductValue(ll), Value::ProductValue(rr)) => ll.compare_eq(rr),
+      (Value::FnType(ll), Value::FnType(rr)) => (ll == rr).into(),
+      (Value::ProductType(ll), Value::ProductType(rr)) => (ll == rr).into(),
+      (Value::BuiltinType(ll), Value::BuiltinType(rr)) => (ll == rr).into(),
+      (Value::Unspecialized(ll), Value::Unspecialized(rr)) => match (ll, rr) {
+        (UnspecializedType::Product(ll), UnspecializedType::Product(rr)) => {
+          Arc::ptr_eq(ll, rr).into()
+        }
+        (UnspecializedType::Signal, UnspecializedType::Signal) => true.into(),
+        (UnspecializedType::Uint, UnspecializedType::Uint) => true.into(),
+        _ => false.into(),
+      },
+      _ => false.into(),
+    }
+  }
+
+  fn compare_ord(&self, other: &Value, ord: ValueOrdering) -> Option<SymbolicUint> {
+    match (self, other) {
+      (Value::UintValue(ll), Value::UintValue(rr)) => {
+        Some((ord.get_comparator())(ll.clone(), rr.clone()))
+      }
       _ => None,
     }
   }
+
+  fn const_truthy(&self) -> Option<bool> {
+    match self {
+      Value::UintValue(x) => x.const_truthy(),
+      _ => None,
+    }
+  }
+
+  fn select(&self, on_true: &Arc<Value>, on_false: &Arc<Value>) -> Result<Arc<Value>> {
+    let predicate = match self {
+      Value::UintValue(x) => x,
+      _ => return Err(EvalError::ValueCannotBeUsedForSelection.into()),
+    };
+
+    if !on_true
+      .get_type()?
+      .compare_eq(&*on_false.get_type()?)
+      .const_truthy()
+      .unwrap_or(false)
+    {
+      return Err(
+        EvalError::SelectTypeMismatch {
+          left: on_true.clone(),
+          right: on_false.clone(),
+        }
+        .into(),
+      );
+    }
+
+    // Allow higher-ranked values if the predicate is constant...
+    if let Some(truthy) = predicate.const_truthy() {
+      return Ok(if truthy {
+        on_true.clone()
+      } else {
+        on_false.clone()
+      });
+    }
+
+    match (&**on_true, &**on_false) {
+      (Value::UintValue(ll), Value::UintValue(rr)) => Ok(Arc::new(Value::UintValue(
+        predicate.clone().sym_select(ll.clone(), rr.clone()),
+      ))),
+      (Value::ProductValue(ll), Value::ProductValue(rr)) => {
+        assert!(Arc::ptr_eq(&ll.unique, &rr.unique));
+        let fields = ll
+          .fields
+          .iter()
+          .map(|(k, v_ll)| {
+            let v_rr = rr
+              .fields
+              .get(k)
+              .expect("select: ProductValue: field mismatch");
+            self.select(v_ll, v_rr).map(|x| (k.clone(), x))
+          })
+          .collect::<Result<BTreeMap<_, _>>>()?;
+        Ok(Arc::new(Value::ProductValue(ProductValue {
+          fields,
+          unique: ll.unique.clone(),
+        })))
+      }
+      _ => Err(
+        EvalError::BadSelectionArms {
+          left: on_true.clone(),
+          right: on_false.clone(),
+        }
+        .into(),
+      ),
+    }
+  }
 }
 
-/// A concrete `uint` value.
-#[derive(Clone, Debug)]
-pub struct UintValue {
-  /// The value.
-  pub value: BigUint,
-
-  /// The bit-width of this `uint`.
-  pub bits: Option<u32>,
+impl ProductValue {
+  fn compare_eq(&self, other: &ProductValue) -> SymbolicUint {
+    if !Arc::ptr_eq(&self.unique, &other.unique) {
+      return false.into();
+    }
+    self
+      .fields
+      .iter()
+      .map(|(k, v)| {
+        (
+          v,
+          other
+            .fields
+            .get(k)
+            .expect("ProductValue: Type eq but fields names are different"),
+        )
+      })
+      .map(|(l, r)| l.compare_eq(r))
+      .fold_first(|prev, this| prev.sym_logic_and(this))
+      .unwrap_or_else(|| {
+        // With zero fields...
+        SymbolicUint::new_const(1u32.into(), 1)
+      })
+  }
 }
 
 impl Value {
   /// Computes the type of a rank-0 or rank-1 `Value`.
   pub fn get_type(&self) -> Result<Arc<Value>> {
     Ok(match self {
-      Value::UintValue(UintValue { bits, .. }) => {
-        Arc::new(Value::BuiltinType(BuiltinType::Uint { bits: *bits }))
-      }
+      Value::UintValue(x) => Arc::new(Value::BuiltinType(BuiltinType::Uint { bits: x.bits() })),
       Value::StringValue(_) => Arc::new(Value::BuiltinType(BuiltinType::String)),
       Value::ProductValue(value) => {
         let mut fields = BTreeMap::new();
@@ -228,36 +360,19 @@ impl Value {
     })
   }
 
-  pub fn truthy(self: &Arc<Self>) -> Result<bool> {
-    match &**self {
-      Value::UintValue(UintValue { value, .. }) => {
-        if u32::try_from(value).unwrap_or(1) == 0 {
-          Ok(false)
-        } else {
-          Ok(true)
-        }
-      }
-      _ => Err(EvalError::TypeHasNoTrueValue(self.clone()).into()),
-    }
-  }
-
   /// Casts a value to this type.
   pub fn cast_to_this_type(&self, value: &Arc<Value>) -> Result<Arc<Value>> {
     match self {
       Value::BuiltinType(BuiltinType::Uint { bits }) => {
         // Truncate
-        let mut value = match &**value {
-          Value::UintValue(UintValue { value, .. }) => value.clone(),
+        let value = match &**value {
+          Value::UintValue(x) => x.clone().sym_resize(*bits, false),
           _ => return Err(EvalError::BadCast.into()),
         };
-        if let Some(target_bits) = *bits {
-          truncate_biguint(&mut value, target_bits as u64);
-        }
-        Ok(Arc::new(Value::UintValue(UintValue { bits: *bits, value })))
+        Ok(Arc::new(Value::UintValue(value)))
       }
       Value::BuiltinType(BuiltinType::String) => {
         let value = match &**value {
-          Value::UintValue(UintValue { value, .. }) => mk_arc_str(&format!("{}", value)),
           Value::StringValue(x) => x.clone(),
           _ => return Err(EvalError::BadCast.into()),
         };
@@ -325,15 +440,6 @@ pub struct ProductValue {
   pub unique: Arc<UniqueProduct>,
 }
 
-impl PartialEq for ProductValue {
-  fn eq(&self, other: &ProductValue) -> bool {
-    // Same unique root & same field values
-    Arc::ptr_eq(&self.unique, &other.unique) && self.fields == other.fields
-  }
-}
-
-impl Eq for ProductValue {}
-
 #[derive(Clone, Debug)]
 pub struct ProductType {
   pub fields: BTreeMap<Arc<str>, Arc<Value>>,
@@ -351,7 +457,7 @@ impl Eq for ProductType {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BuiltinType {
-  Uint { bits: Option<u32> },
+  Uint { bits: u32 },
   String,
   Signal { inner: Arc<Value> },
 }
@@ -517,16 +623,18 @@ impl EvalContext {
       }
       UnspecializedType::Uint => {
         if tyassigns.len() == 0 {
-          Value::BuiltinType(BuiltinType::Uint { bits: None })
+          Value::BuiltinType(BuiltinType::Uint {
+            bits: std::u32::MAX,
+          })
         } else if tyassigns.len() == 1 && tyassigns[0].ty.is_none() {
           let width = self.eval_expr(&tyassigns[0].e)?;
           match &*width {
-            Value::UintValue(UintValue { ref value, .. }) => {
-              let width = match u32::try_from(value) {
+            Value::UintValue(x) => {
+              let width = match u32::try_from(x.as_const()?) {
                 Ok(x) => x,
                 Err(_) => return Err(EvalError::BadSpecialization.into()),
               };
-              Value::BuiltinType(BuiltinType::Uint { bits: Some(width) })
+              Value::BuiltinType(BuiltinType::Uint { bits: width })
             }
             _ => return Err(EvalError::BadSpecialization.into()),
           }
@@ -557,56 +665,48 @@ impl EvalContext {
         let right = self.eval_expr(right)?;
 
         let value = match &*id.0 {
-          "eq" => *base == right,
-          "ne" => *base != right,
+          "eq" => base.compare_eq(&right),
+          "ne" => base.compare_eq(&right).sym_eq(false.into()),
           _ => {
-            let base_ty = base.get_type()?;
-            let right_ty = right.get_type()?;
-            if base_ty != right_ty {
-              return Err(EvalError::TypeMismatch.into());
-            }
-
-            match &*id.0 {
-              "lt" => *base < right,
-              "le" => *base <= right,
-              "gt" => *base > right,
-              "ge" => *base >= right,
+            let ord = match &*id.0 {
+              "lt" => ValueOrdering::Lt,
+              "le" => ValueOrdering::Le,
+              "gt" => ValueOrdering::Gt,
+              "ge" => ValueOrdering::Ge,
               _ => unreachable!(),
+            };
+            match base.compare_ord(&right, ord) {
+              Some(x) => x,
+              None => {
+                return Err(
+                  EvalError::UncomparableTypes {
+                    op: id.0.clone(),
+                    left: base.clone(),
+                    right,
+                  }
+                  .into(),
+                )
+              }
             }
           }
         };
-        let value = if value { 1u32 } else { 0u32 };
-        Value::UintValue(UintValue {
-          value: BigUint::from(value),
-          bits: Some(1),
-        })
+        Value::UintValue(value)
       }
       "logicand" | "logicor" => {
         let right = args.get(0).ok_or_else(|| EvalError::MissingArgument)?;
 
-        let result = match &*id.0 {
-          "logicand" => {
-            if base.truthy()? {
-              self.eval_expr(right)?.truthy()?
-            } else {
-              false
-            }
-          }
-          "logicor" => {
-            if !base.truthy()? {
-              self.eval_expr(right)?.truthy()?
-            } else {
-              true
-            }
-          }
-          _ => unreachable!(),
-        };
-        let value = if result { 1u32 } else { 0u32 };
+        // TODO: short-circuiting semantics?
+        let right = self.eval_expr(right)?;
 
-        Value::UintValue(UintValue {
-          value: BigUint::from(value),
-          bits: Some(1),
-        })
+        let result = match (&**base, &*right) {
+          (Value::UintValue(ll), Value::UintValue(rr)) => match &*id.0 {
+            "logicand" => ll.clone().sym_logic_and(rr.clone()),
+            "logicor" => ll.clone().sym_logic_or(rr.clone()),
+            _ => unreachable!(),
+          },
+          _ => return Err(EvalError::TypeMismatch.into()),
+        };
+        Value::UintValue(result)
       }
       "add" | "sub" | "mul" | "div" => {
         let right = args.get(0).ok_or_else(|| EvalError::MissingArgument)?;
@@ -627,37 +727,17 @@ impl EvalContext {
             }
           },
           (Value::UintValue(ll), Value::UintValue(rr)) => {
-            let mut value = match &*id.0 {
-              "add" => &ll.value + &rr.value,
-              "sub" => &ll.value - &rr.value,
-              "mul" => &ll.value * &rr.value,
-              "div" => ll
-                .value
-                .checked_div(&rr.value)
-                .ok_or_else(|| EvalError::DivByZero)?,
+            let value = match &*id.0 {
+              "add" => ll.clone().sym_add(rr.clone()),
+              "sub" => ll.clone().sym_sub(rr.clone()),
+              "mul" => ll.clone().sym_mul(rr.clone()),
+              "div" => ll.clone().sym_div(rr.clone()),
               _ => unreachable!(),
             };
 
-            if let Some(target_bits) = ll.bits {
-              truncate_biguint(&mut value, target_bits as u64);
-            }
-
-            Value::UintValue(UintValue {
-              value,
-              bits: ll.bits,
-            })
+            Value::UintValue(value)
           }
           _ => return Err(EvalError::TypeMismatch.into()),
-        }
-      }
-      "select" => {
-        let on_true = args.get(0).ok_or_else(|| EvalError::MissingArgument)?;
-        let on_false = args.get(1).ok_or_else(|| EvalError::MissingArgument)?;
-        let predicate = base.truthy()?;
-        if predicate {
-          return Ok(Some(self.eval_expr(on_true)?));
-        } else {
-          return Ok(Some(self.eval_expr(on_false)?));
         }
       }
       "cast" => {
@@ -714,10 +794,9 @@ impl EvalContext {
   pub fn eval_expr(&self, e: &Expr) -> Result<Arc<Value>> {
     let value = match &e.v {
       ExprV::Lit(x) => match x.v {
-        LiteralV::Uint(ref value) => Value::UintValue(UintValue {
-          bits: None,
-          value: value.clone(),
-        }),
+        LiteralV::Uint(ref value) => {
+          Value::UintValue(SymbolicUint::new_const(value.clone(), std::u32::MAX))
+        }
         LiteralV::String(ref value) => Value::StringValue(value.clone()),
       },
       ExprV::Ident(x) => {
@@ -828,13 +907,18 @@ impl EvalContext {
         if_body,
         else_body,
       } => {
-        let condition = self.eval_expr(condition)?.truthy()?;
-        if condition {
-          self.eval_stmt_sequence(&**if_body, Some(ctx))?;
-        } else {
-          if let Some(else_body) = else_body {
-            self.eval_stmt_sequence(&**else_body, Some(ctx))?;
+        let condition = self.eval_expr(condition)?;
+        if let Some(x) = condition.const_truthy() {
+          if x {
+            self.eval_stmt_sequence(&**if_body, Some(ctx))?;
+          } else {
+            if let Some(else_body) = else_body {
+              self.eval_stmt_sequence(&**else_body, Some(ctx))?;
+            }
           }
+        } else {
+          // Evaluate both & select
+          unimplemented!()
         }
       }
       StmtV::Expr { e } => {
@@ -925,9 +1009,14 @@ impl EvalContext {
     let mut selected_spec: Option<&FnSpecialization> = None;
     for spec in target.body.iter() {
       if let Some(condition) = &spec.where_expr {
-        if callee_ctx.eval_expr(condition)?.truthy()? {
-          selected_spec = Some(spec);
-          break;
+        let condition = callee_ctx.eval_expr(condition)?;
+        match condition.const_truthy() {
+          Some(true) => {
+            selected_spec = Some(spec);
+            break;
+          }
+          Some(false) => {}
+          None => return Err(EvalError::NonStaticWhereArm { condition }.into()),
         }
       } else {
         // Default
@@ -956,18 +1045,10 @@ impl EvalContext {
       return Ok(retval.unwrap());
     } else {
       // The "unit type".
-      return Ok(Arc::new(Value::UintValue(UintValue {
-        bits: Some(0),
-        value: BigUint::from(0u32),
-      })));
+      return Ok(Arc::new(Value::UintValue(SymbolicUint::new_const(
+        0u32.into(),
+        0,
+      ))));
     }
   }
-}
-
-fn truncate_biguint(x: &mut BigUint, target_bits: u64) {
-  let value_bits = x.bits();
-  for i in (target_bits as u64)..value_bits {
-    x.set_bit(i, false);
-  }
-  assert!(x.bits() <= target_bits as u64);
 }
