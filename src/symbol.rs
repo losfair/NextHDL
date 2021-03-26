@@ -116,6 +116,13 @@ impl SymbolicUint {
       _ => None,
     }
   }
+
+  pub fn is_const(&self) -> bool {
+    match self.sym.v {
+      UintSymbolV::Const(_, _) => true,
+      _ => false,
+    }
+  }
 }
 
 impl Add for SymbolicUint {

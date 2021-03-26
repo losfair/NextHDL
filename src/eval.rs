@@ -1,6 +1,5 @@
 use anyhow::Result;
 use arc_swap::ArcSwap;
-use num_bigint::BigUint;
 use rpds::RedBlackTreeMapSync;
 use std::{collections::BTreeMap, sync::Arc};
 use thiserror::Error;
@@ -113,6 +112,9 @@ pub enum EvalError {
 
   #[error("operation '{optype}' not supported on value {value:?}")]
   OperationNotSupported { optype: Arc<str>, value: Arc<Value> },
+
+  #[error("symbolic value in type-level computation: {0:?}")]
+  SymbolicValueInTypeLevel(Arc<Value>),
 
   #[error("not implemented: {0}")]
   NotImplemented(&'static str),
@@ -238,6 +240,19 @@ impl Value {
     match self {
       Value::UintValue(x) => x.const_truthy(),
       _ => None,
+    }
+  }
+
+  fn is_const(&self) -> bool {
+    match self {
+      Value::UintValue(x) => x.is_const(),
+      Value::ProductValue(x) => x
+        .fields
+        .iter()
+        .map(|(_, v)| v.is_const())
+        .reduce(|a, b| a && b)
+        .unwrap_or(true),
+      _ => true,
     }
   }
 
@@ -520,6 +535,11 @@ impl EvalContext {
         .or_else(|| tyarg.default_value.as_ref().map(|x| this.eval_expr(x)))
         .transpose()?
         .ok_or_else(|| EvalError::MissingTypeAssign)?;
+
+      // Must not be a symbolic value
+      if !tyassign.is_const() {
+        return Err(EvalError::SymbolicValueInTypeLevel(tyassign).into());
+      }
 
       // Get the expected kind of the type.
       // In the native context.
