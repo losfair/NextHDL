@@ -1,4 +1,4 @@
-#![feature(new_uninit, maybe_uninit_extra, iterator_fold_self)]
+#![feature(new_uninit, maybe_uninit_extra)]
 
 #[macro_use]
 extern crate log;

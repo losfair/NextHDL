@@ -322,7 +322,7 @@ impl ProductValue {
         )
       })
       .map(|(l, r)| l.compare_eq(r))
-      .fold_first(|prev, this| prev.sym_logic_and(this))
+      .reduce(|prev, this| prev.sym_logic_and(this))
       .unwrap_or_else(|| {
         // With zero fields...
         SymbolicUint::new_const(1u32.into(), 1)
