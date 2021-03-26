@@ -28,6 +28,7 @@ pretty_env_logger = "0.4"
 serde = { version = "1", features = ["derive", "rc"] }
 bincode = "1"
 sha2 = { version = "0.9", features = ["asm"] }
+parking_lot = "0.11"
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 jemallocator = "0.3.2"

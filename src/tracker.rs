@@ -1,5 +1,5 @@
+use parking_lot::Mutex;
 use serde::Serialize;
-use std::sync::Mutex;
 use std::{fmt::Debug, sync::RwLock};
 
 pub struct EvalTracker {
@@ -68,7 +68,7 @@ impl EvalTracker {
   }
 
   pub fn enter(&self, entry: EvaluationStackEntry) -> EvalTrackerGuard {
-    let mut stack = self.evaluation_stack.lock().unwrap();
+    let mut stack = self.evaluation_stack.lock();
     let lazy_top = stack.lazy_top;
     stack.stack.truncate(lazy_top);
     stack.stack.push(entry);
@@ -77,24 +77,23 @@ impl EvalTracker {
   }
 
   pub fn merge(&self, that: &Self) {
-    let that_stack = that.evaluation_stack.lock().unwrap();
+    let that_stack = that.evaluation_stack.lock();
     self
       .evaluation_stack
       .lock()
-      .unwrap()
       .stack
       .extend_from_slice(&that_stack.stack);
   }
 
   pub fn dump(&self) -> Vec<EvaluationStackEntry> {
-    self.evaluation_stack.lock().unwrap().stack.clone()
+    self.evaluation_stack.lock().stack.clone()
   }
 }
 
 impl<'a> Drop for EvalTrackerGuard<'a> {
   fn drop(&mut self) {
     // Don't pop
-    self.0.evaluation_stack.lock().unwrap().lazy_top -= 1;
+    self.0.evaluation_stack.lock().lazy_top -= 1;
   }
 }
 
@@ -103,7 +102,7 @@ impl Debug for EvalTracker {
     write!(
       f,
       "EvalTracker {{ evaluation_stack: {:?} }}",
-      self.evaluation_stack.lock().unwrap()
+      self.evaluation_stack.lock()
     )
   }
 }

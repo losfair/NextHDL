@@ -1,10 +1,11 @@
 use anyhow::Result;
 use arc_swap::ArcSwap;
+use parking_lot::Mutex;
 use rpds::RedBlackTreeMapSync;
 use std::{
   collections::BTreeMap,
   fmt::{self, Debug},
-  sync::{Arc, Mutex},
+  sync::Arc,
 };
 use thiserror::Error;
 
@@ -243,8 +244,8 @@ impl AssignmentTable {
 impl Debug for AssignmentTable {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self.priorities.try_lock() {
-      Ok(x) => write!(f, "AssignmentTable {{ priorities: {:?} }}", x),
-      Err(_) => write!(f, "AssignmentTable {{ priorities: [locked] }}"),
+      Some(x) => write!(f, "AssignmentTable {{ priorities: {:?} }}", x),
+      None => write!(f, "AssignmentTable {{ priorities: [locked] }}"),
     }
   }
 }
