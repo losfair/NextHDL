@@ -1,8 +1,30 @@
-use std::fmt::Debug;
+use serde::Serialize;
 use std::sync::Mutex;
+use std::{fmt::Debug, sync::RwLock};
 
 pub struct EvalTracker {
   evaluation_stack: Mutex<EvaluationStack>,
+  signal_table: RwLock<SignalTable>,
+}
+
+struct SignalTable {
+  signals: Vec<SignalInfo>,
+}
+
+pub struct SignalInfo {
+  pub width: u32,
+}
+
+#[derive(Serialize, Debug, Copy, Clone)]
+pub struct SignalHandle {
+  index: usize,
+  width: u32,
+}
+
+impl SignalHandle {
+  pub fn width(&self) -> u32 {
+    self.width
+  }
 }
 
 #[derive(Debug)]
@@ -33,7 +55,16 @@ impl EvalTracker {
         stack: vec![],
         lazy_top: 0,
       }),
+      signal_table: RwLock::new(SignalTable { signals: vec![] }),
     }
+  }
+
+  pub fn allocate_signal(&self, info: SignalInfo) -> SignalHandle {
+    let mut table = self.signal_table.write().unwrap();
+    let index = table.signals.len();
+    let width = info.width;
+    table.signals.push(info);
+    SignalHandle { index, width }
   }
 
   pub fn enter(&self, entry: EvaluationStackEntry) -> EvalTrackerGuard {

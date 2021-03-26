@@ -17,7 +17,6 @@ pub enum ModuleItem {
   Import(ImportItem),
   Fn(FnDef),
   Struct(StructDef),
-  ExternSignal(GenericDef),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -88,9 +87,6 @@ pub struct Stmt {
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum StmtV {
   Let {
-    def: GenericDef,
-  },
-  Signal {
     def: GenericDef,
   },
   IfElse {

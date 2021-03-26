@@ -44,6 +44,10 @@ fn main() -> Result<()> {
     mk_arc_str("uint"),
     Arc::new(Value::Unspecialized(UnspecializedType::Uint)),
   );
+  ctx.names.insert_mut(
+    mk_arc_str("signal"),
+    Arc::new(Value::Unspecialized(UnspecializedType::Signal)),
+  );
 
   // First, insert types...
   for item in ast.items.iter() {

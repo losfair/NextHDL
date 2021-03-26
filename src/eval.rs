@@ -1,7 +1,11 @@
 use anyhow::Result;
 use arc_swap::ArcSwap;
 use rpds::RedBlackTreeMapSync;
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+  collections::BTreeMap,
+  fmt::{self, Debug},
+  sync::{Arc, Mutex},
+};
 use thiserror::Error;
 
 use crate::{
@@ -120,6 +124,18 @@ pub enum EvalError {
   #[error("symbolic value in type-level computation: {0:?}")]
   SymbolicValueInTypeLevel(Arc<Value>),
 
+  #[error("bad signal type: {0}")]
+  BadSignalType(Arc<str>),
+
+  #[error("cannot convert value to string: {0:?}")]
+  CannotConvertToString(Arc<Value>),
+
+  #[error("requested read on an 'out' signal")]
+  ReadOnOutSignal,
+
+  #[error("requested write on an 'in' signal")]
+  WriteOnInSignal,
+
   #[error("not implemented: {0}")]
   NotImplemented(&'static str),
 
@@ -159,6 +175,12 @@ pub enum Value {
   /// A rank-0 `uint` value.
   UintValue(SymbolicUint),
 
+  /// A rank-0 signal value.
+  SignalValue(SignalValue),
+
+  /// A rank-0 undefined value.
+  UndefinedValue,
+
   /// A rank-0 concrete `string` value.
   StringValue(Arc<str>),
 
@@ -171,6 +193,9 @@ pub enum Value {
   /// A rank-0 function value that is already specialized.
   SpecializedFnValue(SpecializedFnValue),
 
+  /// A built-in function.
+  BuiltinFnValue(BuiltinFnValue),
+
   /// A rank-1 specialized function type.
   FnType(SpecializedFnType),
 
@@ -182,6 +207,52 @@ pub enum Value {
 
   /// A rank-2 unspecialized type.
   Unspecialized(UnspecializedType),
+}
+
+#[derive(Debug)]
+pub enum BuiltinFnValue {
+  MkSignal,
+}
+
+#[derive(Debug)]
+pub struct SignalValue {
+  name: Option<Arc<str>>,
+  inner_ty: Arc<Value>,
+  ty: SignalType,
+}
+
+#[derive(Debug)]
+enum SignalType {
+  In,
+  Out { assignment: AssignmentTable },
+  Register { assignment: AssignmentTable },
+}
+
+struct AssignmentTable {
+  priorities: Mutex<BTreeMap<u32, Vec<SignalAssignment>>>,
+}
+
+impl AssignmentTable {
+  fn new() -> Self {
+    Self {
+      priorities: Mutex::new(BTreeMap::new()),
+    }
+  }
+}
+
+impl Debug for AssignmentTable {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self.priorities.try_lock() {
+      Ok(x) => write!(f, "AssignmentTable {{ priorities: {:?} }}", x),
+      Err(_) => write!(f, "AssignmentTable {{ priorities: [locked] }}"),
+    }
+  }
+}
+
+#[derive(Debug)]
+struct SignalAssignment {
+  condition: Arc<Value>,
+  value: Arc<Value>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -322,6 +393,20 @@ impl Value {
         .into(),
       ),
     }
+  }
+
+  fn to_string(&self) -> Option<Arc<str>> {
+    if let Value::StringValue(x) = self {
+      Some(x.clone())
+    } else {
+      None
+    }
+  }
+
+  fn try_to_string(self: &Arc<Self>) -> Result<Arc<str>> {
+    self
+      .to_string()
+      .ok_or_else(|| EvalError::CannotConvertToString(self.clone()).into())
   }
 }
 
@@ -965,7 +1050,6 @@ impl EvalContext {
       StmtV::Expr { e } => {
         ctx.last_result = Some(self.eval_expr(e)?);
       }
-      StmtV::Signal { .. } => return Err(EvalError::NotImplemented("signal stmt").into()),
     }
 
     Ok(())
@@ -1007,6 +1091,37 @@ impl EvalContext {
     Ok(ctx.last_result)
   }
 
+  fn call_builtin_function(target: &BuiltinFnValue, args: &[Arc<Value>]) -> Result<Arc<Value>> {
+    match target {
+      BuiltinFnValue::MkSignal => {
+        let signal_ty = args
+          .get(0)
+          .ok_or_else(|| EvalError::MissingArgument)?
+          .try_to_string()?;
+        let inner_ty = args
+          .get(1)
+          .ok_or_else(|| EvalError::MissingArgument)?
+          .clone();
+        let name = args.get(2).map(|x| x.try_to_string()).transpose()?;
+        let signal_ty = match &*signal_ty {
+          "in" => SignalType::In,
+          "out" => SignalType::Out {
+            assignment: AssignmentTable::new(),
+          },
+          "register" => SignalType::Register {
+            assignment: AssignmentTable::new(),
+          },
+          _ => return Err(EvalError::BadSignalType(signal_ty.clone()).into()),
+        };
+        Ok(Arc::new(Value::SignalValue(SignalValue {
+          name,
+          inner_ty,
+          ty: signal_ty,
+        })))
+      }
+    }
+  }
+
   pub fn call_function(
     target: Arc<Value>,
     args: &[Arc<Value>],
@@ -1014,6 +1129,7 @@ impl EvalContext {
   ) -> Result<Arc<Value>> {
     let target = match &*target {
       Value::SpecializedFnValue(value) => value,
+      Value::BuiltinFnValue(x) => return Self::call_builtin_function(x, args),
       _ => return Err(EvalError::CallingNonCallable.into()),
     };
     if target.ty.args.len() != args.len() {

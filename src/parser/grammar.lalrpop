@@ -20,7 +20,6 @@ pub ModuleDef: ast::ModuleDef = {
 ModuleItem: ast::ModuleItem = {
   <x:FnDef> => ast::ModuleItem::Fn(x),
   <x:StructDef> => ast::ModuleItem::Struct(x),
-  Token<"extern"> Token<"signal"> <x:GenericDef> Token<";"> => ast::ModuleItem::ExternSignal(x),
   Token<"import"> <path:StringLit> Token<"as"> <as_name:Identifier> Token<";"> => ast::ModuleItem::Import(ast::ImportItem { path, as_name }),
 };
 
@@ -123,7 +122,6 @@ Stmt: ast::Stmt = {
 
 StmtV: ast::StmtV = {
   Token<"let"> <def:GenericDef> Token<";"> => ast::StmtV::Let { def },
-  Token<"signal"> <def:GenericDef> Token<";"> => ast::StmtV::Signal { def },
   Token<"if"> <e:Expr> <if_body:Body> => ast::StmtV::IfElse { condition: e, if_body, else_body: None },
   Token<"if"> <e:Expr> <if_body:Body> Token<"else"> <else_body:Body> => ast::StmtV::IfElse {
     condition: e,

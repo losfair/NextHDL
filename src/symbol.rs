@@ -9,6 +9,8 @@ use std::{
 };
 use thiserror::Error;
 
+use crate::tracker::SignalHandle;
+
 #[derive(Error, Debug)]
 pub enum SymbolicError {
   #[error("cannot reduce symbolic value to constant")]
@@ -25,8 +27,8 @@ impl SymbolicUint {
     Self::new_v(UintSymbolV::Const(value, bits))
   }
 
-  pub fn new_external(name: Arc<str>, bits: u32) -> Self {
-    Self::new_v(UintSymbolV::External { name, bits })
+  pub fn new_external(x: SignalHandle) -> Self {
+    Self::new_v(UintSymbolV::External(x))
   }
 
   fn new_v(v: UintSymbolV) -> Self {
@@ -123,6 +125,10 @@ impl SymbolicUint {
       _ => false,
     }
   }
+
+  pub fn get_hash(&self) -> &[u8; 32] {
+    &self.sym.hash
+  }
 }
 
 impl Add for SymbolicUint {
@@ -187,10 +193,7 @@ impl Eq for UintSymbol {}
 #[derive(Serialize, Debug)]
 enum UintSymbolV {
   /// An external signal.
-  External {
-    name: Arc<str>,
-    bits: u32,
-  },
+  External(SignalHandle),
 
   /// A constant.
   Const(BigUint, u32),
@@ -243,7 +246,7 @@ impl UintSymbol {
     }
 
     let bits = match &v {
-      UintSymbolV::External { bits, .. } => *bits,
+      UintSymbolV::External(x) => x.width(),
       UintSymbolV::Const(_, bits) => *bits,
       UintSymbolV::Add(left, _) => {
         // Right value will be truncated to match left
