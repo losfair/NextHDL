@@ -1,14 +1,13 @@
 use std::{
   cell::RefCell,
   collections::{HashMap, HashSet},
-  convert::TryFrom,
   mem::ManuallyDrop,
   rc::Rc,
 };
 
 use anyhow::Result;
 use z3::{
-  ast::{forall_const, Bool, Dynamic, Int, BV},
+  ast::{Int, BV},
   Config, Context, SatResult, Solver,
 };
 
@@ -70,8 +69,6 @@ struct SmtBuildContext<'ctx> {
 
   one: BV<'ctx>,
   zero: BV<'ctx>,
-
-  consts: Vec<Dynamic<'ctx>>,
 }
 
 impl<'ctx> SmtBuildContext<'ctx> {
@@ -84,28 +81,28 @@ impl<'ctx> SmtBuildContext<'ctx> {
       cache: Default::default(),
       one,
       zero,
-      consts: vec![],
     }
   }
 
   fn solve_boolean(&mut self, value: &SymbolicUint) -> Result<Option<bool>> {
-    self.consts.clear();
-
     let value = value.sym.build(self)?;
-    let predicate = value.bvredor().bvugt(&self.zero);
-    let bounds = std::mem::replace(&mut self.consts, vec![]);
-    let bounds = bounds.iter().collect::<Vec<_>>();
-    let goal = Bool::try_from(forall_const(&self.z3_ctx, &bounds, &[], &predicate))
-      .expect("cannot convert forall output to bool");
 
     let solver = Solver::new(&self.z3_ctx);
-    solver.assert(&goal);
-    let result = solver.check();
-    Ok(match result {
-      SatResult::Sat => Some(true),
-      SatResult::Unsat => Some(false),
-      SatResult::Unknown => None,
-    })
+
+    // `not(condition)` being satisfiable means `condition` isn't always true
+    solver.assert(&value.bvredor().bvule(&self.zero));
+    match solver.check() {
+      SatResult::Sat => {}
+      SatResult::Unsat => return Ok(Some(true)),
+      SatResult::Unknown => return Ok(None),
+    }
+
+    solver.reset();
+    solver.assert(&value.bvredor().bvugt(&self.zero));
+    match solver.check() {
+      SatResult::Unsat => Ok(Some(false)),
+      _ => Ok(None),
+    }
   }
 }
 
@@ -141,7 +138,6 @@ impl BuildSmtSymbol for UintSymbol {
       UintSymbolV::External(handle) => {
         let sym = z3::Symbol::Int(handle.index());
         let v = BV::new_const(&ctx.z3_ctx, sym, handle.width());
-        ctx.consts.push(v.clone().into());
         Ok(v)
       }
       UintSymbolV::Const(x, bits) => {
