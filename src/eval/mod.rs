@@ -1,4 +1,5 @@
 pub mod error;
+pub mod signal;
 pub mod value;
 
 use error::EvalError;
@@ -21,6 +22,8 @@ use crate::{
   symbol::SymbolicUint,
 };
 use std::convert::TryFrom;
+
+use self::signal::{AssignmentTable, SignalType, SignalValue};
 
 #[derive(Clone, Debug)]
 pub struct EvalContext {
