@@ -38,7 +38,7 @@ fn leb128_decode_statem<N: uint, M: uint>(
       leb128_decode_statem<N - 1, M + 7>(next_byte, completion, buf);
     } else {
       fork {
-        completion(buf.slice[31..0], 1);
+        completion(buf[31..0], 1);
       }
     }
   }
