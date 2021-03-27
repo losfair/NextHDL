@@ -1,0 +1,10 @@
+fn gen_id<N: uint<>>() -> fn (_: uint<N>) -> uint<N> {
+  {
+    (x: uint<N>) -> uint<N> in
+    x;
+  };
+}
+
+fn entry() -> fn (_: uint<8>) -> uint<8> {
+  gen_id<8>();
+}

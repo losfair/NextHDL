@@ -39,3 +39,4 @@ jobs:
           chmod +x ./exe/concrete_execution
           ./exe/concrete_execution ./test/concrete/fib.txt
           ./exe/concrete_execution ./test/concrete/typefib.txt
+          ./exe/concrete_execution ./test/concrete/return_block.txt
