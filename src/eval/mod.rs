@@ -227,6 +227,9 @@ impl EvalContext {
                 Ok(x) => x,
                 Err(_) => return Err(EvalError::BadSpecialization.into()),
               };
+              if width == 0 {
+                return Err(EvalError::ZeroSizedUint.into());
+              }
               Value::BuiltinType(BuiltinType::Uint { bits: width })
             }
             _ => return Err(EvalError::BadSpecialization.into()),
@@ -680,7 +683,12 @@ impl EvalContext {
     for spec in target.body.iter() {
       if let Some(condition) = &spec.where_expr {
         let condition = callee_ctx.eval_expr(condition)?;
-        match condition.const_truthy() {
+        let truthy = condition
+          .const_truthy()
+          .map(Ok)
+          .or_else(|| condition.smt_truthy().transpose())
+          .transpose()?;
+        match truthy {
           Some(true) => {
             selected_spec = Some(spec);
             break;
@@ -715,10 +723,7 @@ impl EvalContext {
       return Ok(retval.unwrap());
     } else {
       // The "unit type".
-      return Ok(Arc::new(Value::UintValue(SymbolicUint::new_const(
-        0u32.into(),
-        0,
-      ))));
+      return Ok(Arc::new(Value::UndefinedValue));
     }
   }
 }

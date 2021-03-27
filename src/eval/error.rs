@@ -120,6 +120,9 @@ pub enum EvalError {
   #[error("requested write on an 'in' signal")]
   WriteOnInSignal,
 
+  #[error("zero-sized uint")]
+  ZeroSizedUint,
+
   #[error("not implemented: {0}")]
   NotImplemented(&'static str),
 

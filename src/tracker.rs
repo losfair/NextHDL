@@ -20,11 +20,15 @@ pub struct SignalInfo {
 
 #[derive(Serialize, Debug, Copy, Clone)]
 pub struct SignalHandle {
-  index: usize,
+  index: u32,
   width: u32,
 }
 
 impl SignalHandle {
+  pub fn index(&self) -> u32 {
+    self.index
+  }
+
   pub fn width(&self) -> u32 {
     self.width
   }
@@ -72,7 +76,7 @@ impl EvalTracker {
 
   pub fn allocate_signal(&self, info: SignalInfo) -> SignalHandle {
     let mut table = self.signal_table.write();
-    let index = table.signals.len();
+    let index = table.signals.len() as u32;
     let width = info.width;
     table.signals.push(info);
     SignalHandle { index, width }

@@ -135,6 +135,13 @@ impl Value {
     }
   }
 
+  pub fn smt_truthy(&self) -> Result<Option<bool>> {
+    match self {
+      Value::UintValue(x) => x.smt_solve_boolean(),
+      _ => Ok(None),
+    }
+  }
+
   pub fn is_const(&self) -> bool {
     match self {
       Value::UintValue(x) => x.is_const(),

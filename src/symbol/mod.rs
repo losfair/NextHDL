@@ -1,3 +1,5 @@
+mod smt;
+
 use anyhow::Result;
 use num_bigint::BigUint;
 use serde::Serialize;
@@ -10,6 +12,8 @@ use std::{
 use thiserror::Error;
 
 use crate::tracker::SignalHandle;
+
+use self::smt::OwnedSmtBuildContext;
 
 #[derive(Error, Debug)]
 pub enum SymbolicError {
@@ -29,6 +33,11 @@ impl SymbolicUint {
 
   pub fn new_external(x: SignalHandle) -> Self {
     Self::new_v(UintSymbolV::External(x))
+  }
+
+  pub fn smt_solve_boolean(&self) -> Result<Option<bool>> {
+    info!("Running SMT solver on SymbolicUint: {:?}", self);
+    OwnedSmtBuildContext::current().solve_boolean(self)
   }
 
   fn new_v(v: UintSymbolV) -> Self {
@@ -170,15 +179,15 @@ impl From<bool> for SymbolicUint {
 
 /// A symbolic value of `uint`.
 #[derive(Serialize, Debug)]
-struct UintSymbol {
+pub(self) struct UintSymbol {
   #[serde(skip)]
-  v: UintSymbolV,
+  pub v: UintSymbolV,
 
   #[serde(skip)]
-  bits: u32,
+  pub bits: u32,
 
   /// The hash calculated from `v`.
-  hash: [u8; 32],
+  pub hash: [u8; 32],
 }
 
 impl PartialEq for UintSymbol {
@@ -191,7 +200,7 @@ impl Eq for UintSymbol {}
 
 /// A variant of `UintSymbol`.
 #[derive(Serialize, Debug)]
-enum UintSymbolV {
+pub(self) enum UintSymbolV {
   /// An external signal.
   External(SignalHandle),
 
