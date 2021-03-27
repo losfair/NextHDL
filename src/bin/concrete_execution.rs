@@ -9,7 +9,7 @@ use std::fs::read_to_string;
 use std::sync::Arc;
 
 use anyhow::Result;
-use arc_swap::ArcSwap;
+use arc_swap::ArcSwapWeak;
 use nexthdl::{
   ast::{ModuleDef, ModuleItem},
   eval::{
@@ -37,7 +37,10 @@ fn main() -> Result<()> {
   let mut ctx = EvalContext::new();
 
   // Placeholder value for now
-  let top_level_context = Arc::new(ArcSwap::new(Arc::new(EvalContext::new())));
+  // Invalid weak reference!
+  let top_level_context = Arc::new(ArcSwapWeak::new(Arc::downgrade(&Arc::new(
+    EvalContext::new(),
+  ))));
 
   // Insert builtin types
   ctx.names.insert_mut(
@@ -90,7 +93,8 @@ fn main() -> Result<()> {
   }
 
   // Replace top-level EvalContext.
-  top_level_context.store(Arc::new(ctx.clone()));
+  let ctx_owner = Arc::new(ctx.clone());
+  top_level_context.store(Arc::downgrade(&ctx_owner));
 
   let entry = ctx.names.get("entry").expect("missing entry");
   let ret = EvalContext::call_function(entry.clone(), &[], None);

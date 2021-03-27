@@ -108,8 +108,8 @@ ActualArgList<I>: Arc<[ast::Expr]> = {
 };
 
 Block: ast::Block = {
-  Token<"{"> <args:FnArgList> Token<"in"> <body:PlainBody> Token<"}"> => ast::Block { args, body },
-  Token<"{"> <body:PlainBody> Token<"}"> => ast::Block { args: mk_arc_slice(std::iter::empty()), body },
+  Token<"{"> <args:FnArgList> <ret:FnRet?> Token<"in"> <body:PlainBody> Token<"}"> => ast::Block { args, ret, body },
+  Token<"{"> <body:PlainBody> Token<"}"> => ast::Block { args: mk_arc_slice(std::iter::empty()), ret: None, body },
 };
 
 PlainBody: Arc<[ast::Stmt]> = {

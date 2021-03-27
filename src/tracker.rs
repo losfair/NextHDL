@@ -1,10 +1,13 @@
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use serde::Serialize;
-use std::{fmt::Debug, sync::RwLock};
+use std::{fmt::Debug, sync::Arc};
+
+use crate::eval::EvalContext;
 
 pub struct EvalTracker {
   evaluation_stack: Mutex<EvaluationStack>,
   signal_table: RwLock<SignalTable>,
+  context_registry: Mutex<Vec<Arc<EvalContext>>>,
 }
 
 struct SignalTable {
@@ -56,11 +59,19 @@ impl EvalTracker {
         lazy_top: 0,
       }),
       signal_table: RwLock::new(SignalTable { signals: vec![] }),
+      context_registry: Mutex::new(vec![]),
     }
   }
 
+  /// Allocates an `Arc<EvalContext>` that is holded in the tracker until being dropped.
+  pub fn allocate_context(&self, ctx: EvalContext) -> Arc<EvalContext> {
+    let ctx = Arc::new(ctx);
+    self.context_registry.lock().push(ctx.clone());
+    ctx
+  }
+
   pub fn allocate_signal(&self, info: SignalInfo) -> SignalHandle {
-    let mut table = self.signal_table.write().unwrap();
+    let mut table = self.signal_table.write();
     let index = table.signals.len();
     let width = info.width;
     table.signals.push(info);

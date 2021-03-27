@@ -106,6 +106,7 @@ pub enum StmtV {
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Block {
   pub args: Arc<[FnArg]>,
+  pub ret: Option<Arc<Expr>>,
   pub body: Arc<[Stmt]>,
 }
 

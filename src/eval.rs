@@ -1,5 +1,5 @@
 use anyhow::Result;
-use arc_swap::ArcSwap;
+use arc_swap::ArcSwapWeak;
 use parking_lot::Mutex;
 use rpds::RedBlackTreeMapSync;
 use std::{
@@ -164,7 +164,7 @@ pub enum UnspecializedType {
 #[derive(Debug)]
 pub struct UniqueProduct {
   pub def: StructDef,
-  pub context: Arc<ArcSwap<EvalContext>>,
+  pub context: Arc<ArcSwapWeak<EvalContext>>,
 }
 
 #[derive(Clone, Debug)]
@@ -524,14 +524,14 @@ impl Eq for SpecializedFnType {}
 pub struct UnspecializedFnValue {
   pub ty: FnMeta,
   pub body: Arc<[FnSpecialization]>,
-  pub context: Arc<ArcSwap<EvalContext>>,
+  pub context: Arc<ArcSwapWeak<EvalContext>>,
 }
 
 #[derive(Clone, Debug)]
 pub struct SpecializedFnValue {
   pub ty: SpecializedFnType,
   pub body: Arc<[FnSpecialization]>,
-  pub context: Arc<ArcSwap<EvalContext>>,
+  pub context: Arc<ArcSwapWeak<EvalContext>>,
 }
 
 #[derive(Clone, Debug)]
@@ -730,7 +730,12 @@ impl EvalContext {
     Ok(Arc::new(match ty {
       UnspecializedType::Product(unique) => {
         // Specialize in its own context...
-        let mut specialization_context: EvalContext = (**unique.context.load()).clone();
+        let mut specialization_context: EvalContext = (*unique
+          .context
+          .load()
+          .upgrade()
+          .expect("cannot upgrade context"))
+        .clone();
 
         self.compute_tyassigns(&mut specialization_context, tyassigns, &unique.def.tyargs)?;
 
@@ -948,7 +953,11 @@ impl EvalContext {
           // TODO: Check and error otherwise.
           Value::UnspecializedFnValue(value) => {
             let native_context = value.context.load();
-            let ty = self.specialize_fntype((**native_context).clone(), &value.ty, &*tyassigns)?;
+            let ty = self.specialize_fntype(
+              (*native_context.upgrade().expect("cannot upgrade context")).clone(),
+              &value.ty,
+              &*tyassigns,
+            )?;
             Value::SpecializedFnValue(SpecializedFnValue {
               ty,
               body: value.body.clone(),
@@ -968,8 +977,27 @@ impl EvalContext {
         let ty = self.specialize_fntype(self.clone(), meta, &[])?;
         Value::FnType(ty)
       }
-      _ => {
-        return Err(EvalError::ExprNotImplemented(e.clone()).into());
+      ExprV::Block(block) => {
+        let meta = FnMeta {
+          tyargs: Arc::new([]),
+          args: block.args.clone(),
+          // TODO: support returning value from block
+          ret: block.ret.clone(),
+        };
+        let ty = self.specialize_fntype(self.clone(), &meta, &[])?;
+        let ctx = Arc::downgrade(&self.tracker.allocate_context(self.clone()));
+        Value::SpecializedFnValue(SpecializedFnValue {
+          ty,
+          body: Arc::new([FnSpecialization {
+            where_expr: None,
+            body: Body {
+              body: block.body.clone(),
+              loc_start: e.loc_start,
+              loc_end: e.loc_end,
+            },
+          }]),
+          context: Arc::new(ArcSwapWeak::new(ctx)),
+        })
       }
     };
     Ok(Arc::new(value))
@@ -1152,7 +1180,12 @@ impl EvalContext {
     }
 
     // Derive a callee context.
-    let mut callee_ctx = (**target.context.load()).clone();
+    let mut callee_ctx = (*target
+      .context
+      .load()
+      .upgrade()
+      .expect("cannot upgrade context"))
+    .clone();
     let tracker = callee_ctx.tracker.clone();
     let _tracker_guard = tracker.enter(EvaluationStackEntry {
       ty: EvaluationStackEntryType::FunctionCall,
