@@ -13,7 +13,8 @@ use arc_swap::ArcSwapWeak;
 use nexthdl::{
   ast::{ModuleDef, ModuleItem},
   eval::{
-    EvalContext, SpecializedFnValue, UniqueProduct, UnspecializedFnValue, UnspecializedType, Value,
+    value::{SpecializedFnValue, UniqueProduct, UnspecializedFnValue, UnspecializedType, Value},
+    EvalContext,
   },
   parser::state::State,
   source_loc::SourceLocResolver,
