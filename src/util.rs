@@ -3,6 +3,8 @@ use std::{
   sync::Arc,
 };
 
+use num_bigint::BigUint;
+
 pub fn mk_arc_str(from: &str) -> Arc<str> {
   let s = mk_arc_slice(from.as_bytes().iter().copied());
   unsafe { std::mem::transmute::<Arc<[u8]>, Arc<str>>(s) }
@@ -97,4 +99,12 @@ impl<T> Iterator for ArcSliceTakeAllIterator<T> {
       Some(value)
     }
   }
+}
+
+pub fn truncate_biguint(x: &mut BigUint, target_bits: u32) {
+  let value_bits = x.bits();
+  for i in (target_bits as u64)..value_bits {
+    x.set_bit(i, false);
+  }
+  assert!(x.bits() <= target_bits as u64);
 }

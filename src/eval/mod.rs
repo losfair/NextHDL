@@ -58,6 +58,10 @@ impl EvalContext {
     self.tracker.dump()
   }
 
+  pub fn tracker(&self) -> &Arc<EvalTracker> {
+    &self.tracker
+  }
+
   fn lookup_name(&self, x: &Identifier) -> Result<Arc<Value>> {
     match self.names.get(&x.0) {
       Some(x) => Ok(x.clone()),
@@ -342,6 +346,18 @@ impl EvalContext {
         let output = target_type.cast_to_this_type(&base)?;
         return Ok(Some(output));
       }
+      "read" => {
+        let base = match &**base {
+          Value::SignalValue(v) => v,
+          _ => return Err(EvalError::TypeMismatch.into()),
+        };
+        match base.ty {
+          SignalType::In => {}
+          _ => return Err(EvalError::ReadOnOutSignal.into()),
+        }
+        let value = SymbolicUint::new_external(base.handle);
+        Value::unpack(value, &base.inner_ty)?
+      }
       _ => return Ok(None),
     };
     Ok(Some(Arc::new(value)))
@@ -370,7 +386,12 @@ impl EvalContext {
     for e in args.iter() {
       arg_values.push(self.eval_expr(e)?);
     }
-    return Ok(Self::call_function(base, &arg_values, Some(loc))?);
+    return Ok(Self::call_function(
+      &self.tracker,
+      base,
+      &arg_values,
+      Some(loc),
+    )?);
   }
 
   fn eval_dot(&self, base: &Arc<Value>, id: &Identifier) -> Result<Arc<Value>> {
@@ -588,7 +609,11 @@ impl EvalContext {
     Ok(ctx.last_result)
   }
 
-  fn call_builtin_function(target: &BuiltinFnValue, args: &[Arc<Value>]) -> Result<Arc<Value>> {
+  fn call_builtin_function(
+    tracker: &EvalTracker,
+    target: &BuiltinFnValue,
+    args: &[Arc<Value>],
+  ) -> Result<Arc<Value>> {
     match target {
       BuiltinFnValue::MkSignal => {
         let signal_ty = args
@@ -610,23 +635,28 @@ impl EvalContext {
           },
           _ => return Err(EvalError::BadSignalType(signal_ty.clone()).into()),
         };
-        Ok(Arc::new(Value::SignalValue(SignalValue {
-          name,
-          inner_ty,
-          ty: signal_ty,
-        })))
+        let value = SignalValue::generate(tracker, signal_ty, inner_ty, name)?;
+        Ok(Arc::new(Value::SignalValue(value)))
+      }
+      BuiltinFnValue::Error => {
+        let msg = args
+          .get(0)
+          .ok_or_else(|| EvalError::MissingArgument)?
+          .try_to_string()?;
+        Err(EvalError::UserError(msg).into())
       }
     }
   }
 
   pub fn call_function(
+    tracker: &Arc<EvalTracker>,
     target: Arc<Value>,
     args: &[Arc<Value>],
     loc: Option<(usize, usize)>,
   ) -> Result<Arc<Value>> {
     let target = match &*target {
       Value::SpecializedFnValue(value) => value,
-      Value::BuiltinFnValue(x) => return Self::call_builtin_function(x, args),
+      Value::BuiltinFnValue(x) => return Self::call_builtin_function(&**tracker, x, args),
       _ => return Err(EvalError::CallingNonCallable.into()),
     };
     if target.ty.args.len() != args.len() {
@@ -706,21 +736,23 @@ impl EvalContext {
     let selected_spec = selected_spec.ok_or_else(|| EvalError::NoSpecializationSelected)?;
 
     // Run it!
-    let retval = callee_ctx.eval_body(&selected_spec.body, None)?;
-    let actual_ret_type = retval.as_ref().map(|x| x.get_type()).transpose()?;
+    let retval = callee_ctx
+      .eval_body(&selected_spec.body, None)?
+      .unwrap_or_else(|| Arc::new(Value::UndefinedValue));
+    let actual_ret_type = retval.get_type()?;
 
     // Implicitly ignore the return type if nothing is expected
-    if target.ty.ret.is_some() {
-      if target.ty.ret != actual_ret_type {
+    if let Some(ref expected_ret_type) = target.ty.ret {
+      if *expected_ret_type != actual_ret_type {
         return Err(
           EvalError::ReturnTypeMismatch {
-            expected: target.ty.ret.as_ref().unwrap().clone(),
+            expected: expected_ret_type.clone(),
             actual: actual_ret_type,
           }
           .into(),
         );
       }
-      return Ok(retval.unwrap());
+      return Ok(retval);
     } else {
       // The "unit type".
       return Ok(Arc::new(Value::UndefinedValue));

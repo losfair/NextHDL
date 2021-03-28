@@ -1,3 +1,5 @@
+use crate::tracker::{EvalTracker, SignalHandle, SignalInfo};
+use anyhow::Result;
 use std::{collections::BTreeMap, fmt, sync::Arc};
 
 use super::value::Value;
@@ -6,7 +8,7 @@ use std::fmt::Debug;
 
 #[derive(Debug)]
 pub struct SignalValue {
-  pub name: Option<Arc<str>>,
+  pub handle: SignalHandle,
   pub inner_ty: Arc<Value>,
   pub ty: SignalType,
 }
@@ -43,4 +45,21 @@ impl Debug for AssignmentTable {
 struct SignalAssignment {
   condition: Arc<Value>,
   value: Arc<Value>,
+}
+
+impl SignalValue {
+  pub fn generate(
+    tracker: &EvalTracker,
+    ty: SignalType,
+    inner_ty: Arc<Value>,
+    name: Option<Arc<str>>,
+  ) -> Result<Self> {
+    let width = inner_ty.rank1_width()?;
+    let handle = tracker.allocate_signal(SignalInfo { width, name });
+    Ok(Self {
+      handle,
+      inner_ty,
+      ty,
+    })
+  }
 }

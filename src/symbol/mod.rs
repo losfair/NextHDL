@@ -5,13 +5,14 @@ use num_bigint::BigUint;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::convert::TryFrom;
+use std::fmt::{self, Debug};
 use std::{
   ops::{Add, Div, Mul, Sub},
   sync::Arc,
 };
 use thiserror::Error;
 
-use crate::tracker::SignalHandle;
+use crate::{tracker::SignalHandle, util::truncate_biguint};
 
 use self::smt::OwnedSmtBuildContext;
 
@@ -19,6 +20,9 @@ use self::smt::OwnedSmtBuildContext;
 pub enum SymbolicError {
   #[error("cannot reduce symbolic value to constant")]
   CannotReduceToConstant,
+
+  #[error("invalid slice bounds")]
+  InvalidSliceBounds,
 }
 
 #[derive(Clone, Debug)]
@@ -110,6 +114,22 @@ impl SymbolicUint {
     })
   }
 
+  pub fn sym_concat(self, rhs: Self) -> SymbolicUint {
+    Self::new_v(UintSymbolV::Concat(self.sym, rhs.sym))
+  }
+
+  pub fn sym_slice(self, high: u32, low: u32) -> Result<SymbolicUint> {
+    if high < low || high - low + 1 > self.bits() {
+      Err(SymbolicError::InvalidSliceBounds.into())
+    } else {
+      Ok(Self::new_v(UintSymbolV::Slice {
+        base: self.sym,
+        high,
+        low,
+      }))
+    }
+  }
+
   pub fn bits(&self) -> u32 {
     self.sym.bits
   }
@@ -178,7 +198,7 @@ impl From<bool> for SymbolicUint {
 }
 
 /// A symbolic value of `uint`.
-#[derive(Serialize, Debug)]
+#[derive(Serialize)]
 pub(self) struct UintSymbol {
   #[serde(skip)]
   pub v: UintSymbolV,
@@ -188,6 +208,12 @@ pub(self) struct UintSymbol {
 
   /// The hash calculated from `v`.
   pub hash: [u8; 32],
+}
+
+impl Debug for UintSymbol {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "UintSymbol {{ v: {:?}, bits: {} }}", self.v, self.bits)
+  }
 }
 
 impl PartialEq for UintSymbol {
@@ -240,6 +266,13 @@ pub(self) enum UintSymbolV {
     signed: bool,
   },
 
+  Concat(Arc<UintSymbol>, Arc<UintSymbol>),
+  Slice {
+    base: Arc<UintSymbol>,
+    high: u32,
+    low: u32,
+  },
+
   /// The result of selecting from two `UintSymbol`s based on a predicate.
   Select {
     predicate: Arc<UintSymbol>,
@@ -287,6 +320,8 @@ impl UintSymbol {
         assert_eq!(on_true.bits, on_false.bits);
         on_true.bits
       }
+      UintSymbolV::Concat(left, right) => left.bits + right.bits,
+      UintSymbolV::Slice { high, low, .. } => *high - *low + 1,
     };
     let serialized = bincode::serialize(&v).unwrap();
     let mut hasher = Sha256::new();
@@ -455,16 +490,24 @@ impl UintSymbolV {
         }
         _ => None,
       },
+      UintSymbolV::Concat(left, right) => match (&left.v, &right.v) {
+        (UintSymbolV::Const(lvalue, lbits), UintSymbolV::Const(rvalue, rbits)) => {
+          let result = (lvalue << *rbits) | rvalue;
+          Some(UintSymbol::new(UintSymbolV::Const(result, *lbits + *rbits)))
+        }
+        _ => None,
+      },
+      UintSymbolV::Slice { base, high, low } => match &base.v {
+        UintSymbolV::Const(value, _bits) => {
+          let target_bits = *high - *low + 1;
+          let mut result = value >> *low;
+          truncate_biguint(&mut result, target_bits);
+          Some(UintSymbol::new(UintSymbolV::Const(result, target_bits)))
+        }
+        _ => None,
+      },
     }
   }
-}
-
-fn truncate_biguint(x: &mut BigUint, target_bits: u32) {
-  let value_bits = x.bits();
-  for i in (target_bits as u64)..value_bits {
-    x.set_bit(i, false);
-  }
-  assert!(x.bits() <= target_bits as u64);
 }
 
 fn reduce_const_binop(

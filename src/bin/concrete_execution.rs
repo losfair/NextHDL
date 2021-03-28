@@ -13,7 +13,10 @@ use arc_swap::ArcSwapWeak;
 use nexthdl::{
   ast::{ModuleDef, ModuleItem},
   eval::{
-    value::{SpecializedFnValue, UniqueProduct, UnspecializedFnValue, UnspecializedType, Value},
+    value::{
+      BuiltinFnValue, SpecializedFnValue, UniqueProduct, UnspecializedFnValue, UnspecializedType,
+      Value,
+    },
     EvalContext,
   },
   parser::state::State,
@@ -51,6 +54,14 @@ fn main() -> Result<()> {
   ctx.names.insert_mut(
     mk_arc_str("signal"),
     Arc::new(Value::Unspecialized(UnspecializedType::Signal)),
+  );
+  ctx.names.insert_mut(
+    mk_arc_str("mksignal"),
+    Arc::new(Value::BuiltinFnValue(BuiltinFnValue::MkSignal)),
+  );
+  ctx.names.insert_mut(
+    mk_arc_str("error"),
+    Arc::new(Value::BuiltinFnValue(BuiltinFnValue::Error)),
   );
 
   // First, insert types...
@@ -98,7 +109,8 @@ fn main() -> Result<()> {
   top_level_context.store(Arc::downgrade(&ctx_owner));
 
   let entry = ctx.names.get("entry").expect("missing entry");
-  let ret = EvalContext::call_function(entry.clone(), &[], None);
+  let tracker = ctx.tracker();
+  let ret = EvalContext::call_function(tracker, entry.clone(), &[], None);
   match ret {
     Ok(x) => {
       println!("ret = {:?}", x);

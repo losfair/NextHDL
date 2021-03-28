@@ -1,0 +1,9 @@
+fn entry() {
+  let a = mksignal("in", uint<8>);
+  let b = mksignal("in", uint<8>);
+  check<uint<8>>(a.read() + b.read(), b.read() + a.read());
+}
+
+fn check<T: uint>(a: T, b: T)
+  where a == b {}
+  default { error("check failed"); }

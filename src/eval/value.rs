@@ -68,6 +68,7 @@ pub enum Value {
 #[derive(Debug)]
 pub enum BuiltinFnValue {
   MkSignal,
+  Error,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -230,6 +231,90 @@ impl Value {
       .to_string()
       .ok_or_else(|| EvalError::CannotConvertToString(self.clone()).into())
   }
+
+  pub fn rank1_width(self: &Arc<Self>) -> Result<u32> {
+    match &**self {
+      Value::ProductType(ty) => {
+        ty.fields
+          .iter()
+          .map(|(_, v)| v.rank1_width())
+          .try_fold(0, |acc, x| match x {
+            Ok(x) => Ok(acc + x),
+            Err(e) => Err(e),
+          })
+      }
+      Value::BuiltinType(BuiltinType::Uint { bits }) => Ok(*bits),
+      _ => Err(EvalError::CannotDetermineWidth(self.clone()).into()),
+    }
+  }
+
+  pub fn pack(self: &Arc<Self>) -> Result<Option<SymbolicUint>> {
+    match &**self {
+      Value::UintValue(x) => Ok(Some(x.clone())),
+      Value::ProductValue(v) => v
+        .fields
+        .iter()
+        .filter_map(|(_, v)| v.pack().transpose())
+        .try_fold(None, |acc: Option<SymbolicUint>, x| match x {
+          Ok(x) => match acc {
+            Some(acc) => Ok(Some(acc.sym_concat(x))),
+            None => Ok(Some(x)),
+          },
+          Err(e) => Err(e),
+        }),
+      _ => Err(EvalError::CannotDetermineWidth(self.clone()).into()),
+    }
+  }
+
+  pub fn unpack(that: SymbolicUint, ty: &Arc<Value>) -> Result<Self> {
+    let ty_width = ty.rank1_width()?;
+    if that.bits() != ty_width {
+      return Err(
+        EvalError::UnpackWidthMismatch {
+          expected: ty_width,
+          actual: that.bits(),
+        }
+        .into(),
+      );
+    }
+
+    Self::do_unpack(&mut Some(that), ty)
+  }
+
+  fn do_unpack(source: &mut Option<SymbolicUint>, ty: &Arc<Value>) -> Result<Self> {
+    match &**ty {
+      Value::BuiltinType(BuiltinType::Uint { bits }) => {
+        // already checked in unpack()
+        let that = source.as_mut().expect("do_unpack: empty source");
+
+        let result = that.clone().sym_slice(*bits - 1, 0)?;
+        let that_width = that.bits();
+
+        if that_width == *bits {
+          *source = None;
+        } else {
+          *that = that.clone().sym_slice(that_width - 1, *bits)?;
+        }
+
+        Ok(Value::UintValue(result))
+      }
+      Value::ProductType(ty) => {
+        let value_map = ty
+          .fields
+          .iter()
+          .map(|(k, v)| Self::do_unpack(source, v).map(|x| (k.clone(), Arc::new(x))))
+          .collect::<Result<BTreeMap<_, _>>>()?;
+        Ok(Value::ProductValue(ProductValue {
+          fields: value_map,
+          unique: ty.unique.clone(),
+        }))
+      }
+      _ => {
+        // already checked in unpack()
+        unreachable!()
+      }
+    }
+  }
 }
 
 impl ProductValue {
@@ -275,6 +360,9 @@ impl Value {
         }))
       }
       Value::SpecializedFnValue(value) => Arc::new(Value::FnType(value.ty.clone())),
+      Value::SignalValue(v) => Arc::new(Value::BuiltinType(BuiltinType::Signal {
+        inner: v.inner_ty.clone(),
+      })),
       Value::ProductType(ty) => Arc::new(Value::Unspecialized(UnspecializedType::Product(
         ty.unique.clone(),
       ))),
@@ -284,7 +372,11 @@ impl Value {
       Value::BuiltinType(BuiltinType::Signal { .. }) => {
         Arc::new(Value::Unspecialized(UnspecializedType::Signal))
       }
-      _ => return Err(EvalError::GetTypeForValueOfUnknownType.into()),
+      Value::UndefinedValue => Arc::new(Value::UndefinedValue),
+      _ => {
+        warn!("unknown type for value: {:?}", self);
+        return Err(EvalError::GetTypeForValueOfUnknownType.into());
+      }
     })
   }
 

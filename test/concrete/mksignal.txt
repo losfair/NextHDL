@@ -1,0 +1,3 @@
+fn entry() -> signal<uint<8>> {
+  mksignal("in", uint<8>);
+}

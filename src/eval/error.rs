@@ -65,7 +65,7 @@ pub enum EvalError {
   #[error("return type mismatch: expected {expected:?}, got {actual:?}")]
   ReturnTypeMismatch {
     expected: Arc<Value>,
-    actual: Option<Arc<Value>>,
+    actual: Arc<Value>,
   },
 
   #[error("no specialization selected")]
@@ -122,6 +122,15 @@ pub enum EvalError {
 
   #[error("zero-sized uint")]
   ZeroSizedUint,
+
+  #[error("cannot determine width of value: {0:?}")]
+  CannotDetermineWidth(Arc<Value>),
+
+  #[error("unpack width mismatch: expected {expected} bits, got {actual} bits")]
+  UnpackWidthMismatch { expected: u32, actual: u32 },
+
+  #[error("user error: {0}")]
+  UserError(Arc<str>),
 
   #[error("not implemented: {0}")]
   NotImplemented(&'static str),

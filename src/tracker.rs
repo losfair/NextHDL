@@ -16,6 +16,7 @@ struct SignalTable {
 
 pub struct SignalInfo {
   pub width: u32,
+  pub name: Option<Arc<str>>,
 }
 
 #[derive(Serialize, Debug, Copy, Clone)]

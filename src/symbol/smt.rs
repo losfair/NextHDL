@@ -223,6 +223,17 @@ impl BuildSmtSymbol for UintSymbol {
         let predicate = predicate.build(ctx)?.bvredor().bvugt(&ctx.zero);
         Ok(predicate.ite(&on_true, &on_false))
       }
+      UintSymbolV::Concat(left, right) => {
+        let left = left.build(ctx)?;
+        let right = right.build(ctx)?;
+
+        // TODO: is the order correct?
+        Ok(left.concat(&right))
+      }
+      UintSymbolV::Slice { base, high, low } => {
+        let base = base.build(ctx)?;
+        Ok(base.extract(*high, *low))
+      }
     }
   }
 }
