@@ -36,8 +36,6 @@ fn main() -> Result<()> {
 
   let ast: ModuleDef = parser.parse(&mut state, &f).unwrap();
 
-  println!("{:#?}", ast);
-
   let mut ctx = EvalContext::new();
 
   // Placeholder value for now

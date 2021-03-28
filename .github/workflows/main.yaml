@@ -36,6 +36,7 @@ jobs:
           path: exe
       - name: Run tests
         run: |
+          export RUST_LOG=info
           chmod +x ./exe/concrete_execution
           ./exe/concrete_execution ./test/concrete/fib.txt
           ./exe/concrete_execution ./test/concrete/typefib.txt
