@@ -38,9 +38,9 @@ jobs:
         run: |
           export RUST_LOG=info
           chmod +x ./exe/concrete_execution
-          ./exe/concrete_execution ./test/concrete/fib.txt
-          ./exe/concrete_execution ./test/concrete/typefib.txt
-          ./exe/concrete_execution ./test/concrete/return_block.txt
-          ./exe/concrete_execution ./test/concrete/mksignal.txt
-          ./exe/concrete_execution ./test/symbolic/commutativity.txt
-          ./exe/concrete_execution ./test/symbolic/associativity.txt
+          /bin/time ./exe/concrete_execution ./test/concrete/fib.txt
+          /bin/time ./exe/concrete_execution ./test/concrete/typefib.txt
+          /bin/time ./exe/concrete_execution ./test/concrete/return_block.txt
+          /bin/time ./exe/concrete_execution ./test/concrete/mksignal.txt
+          /bin/time ./exe/concrete_execution ./test/symbolic/commutativity.txt
+          /bin/time ./exe/concrete_execution ./test/symbolic/associativity.txt
