@@ -1,0 +1,12 @@
+fn entry() {
+  let value = 0b10110;
+  static if value[0] != value[3] {
+    error("error");
+  }
+  static if value[1] != value[2] {
+    error("error");
+  }
+  static if value[0] == value[1] {
+    error("error");
+  }
+}

@@ -44,6 +44,7 @@ jobs:
           /bin/time ./exe/concrete_execution ./test/concrete/mksignal.txt
           /bin/time ./exe/concrete_execution ./test/concrete/struct_simple.txt
           /bin/time ./exe/concrete_execution ./test/concrete/struct_field_assign.txt
+          /bin/time ./exe/concrete_execution ./test/concrete/slicing_bits.txt
           /bin/time ./exe/concrete_execution ./test/symbolic/commutativity.txt
           /bin/time ./exe/concrete_execution ./test/symbolic/associativity.txt
           /bin/time ./exe/concrete_execution ./test/symbolic/if_else_simple.txt
@@ -51,3 +52,4 @@ jobs:
           /bin/time ./exe/concrete_execution ./test/symbolic/x_logic.txt
           /bin/time ./exe/concrete_execution ./test/symbolic/struct_inference_1.txt
           /bin/time ./exe/concrete_execution ./test/symbolic/struct_field_assign.txt
+          /bin/time ./exe/concrete_execution ./test/symbolic/concat_slice.txt

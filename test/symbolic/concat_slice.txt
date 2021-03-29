@@ -1,0 +1,14 @@
+fn entry() {
+  let sig = mksignal("in", uint<1>);
+  let value = sig.read();
+  let target = (value == 0) ++ value ++ (value == 0) ++ value ++ value;
+  static if target != 0b10100 && target != 0b01011 {
+    error("error");
+  }
+  static if target[4..=3] != 0b10 && target[4..=3] != 0b01 {
+    error("error");
+  }
+  static if target[4..=3] != target[4] ++ target[0] {
+    error("error");
+  }
+}

@@ -12,7 +12,7 @@ fn entry() {
   let v = undefined(S<uint<8>>);
   v.a = <uint<8>>2;
   v.b.value = sig.read();
-  static if v.a + v.b.value != v.b.value + v.a {
+  static if v.a + v.b.value != sig.read() + 2 {
     error("bad output");
   }
 }
