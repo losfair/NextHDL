@@ -371,6 +371,17 @@ impl EvalContext {
           _ => return Err(EvalError::TypeMismatch.into()),
         }
       }
+      "concat" => {
+        let right = args.get(0).ok_or_else(|| EvalError::MissingArgument)?;
+        let right = self.eval_expr(right)?;
+
+        match (&**base, &*right) {
+          (Value::UintValue(ll), Value::UintValue(rr)) => {
+            Value::UintValue(ll.clone().sym_concat(rr.clone()))
+          }
+          _ => return Err(EvalError::TypeMismatch.into()),
+        }
+      }
       "cast" => {
         let target_type = args.get(0).ok_or_else(|| EvalError::MissingArgument)?;
         let target_type = self.eval_expr(target_type)?;

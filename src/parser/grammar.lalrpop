@@ -207,6 +207,7 @@ ExprV_L3: ast::ExprV = {
   <left:Expr_L3> Token<"-"> <right:Expr_L2> => helper::gen_binop_call(state, "sub", left, right),
   <left:Expr_L3> Token<"&"> <right:Expr_L2> => helper::gen_binop_call(state, "bitand", left, right),
   <left:Expr_L3> Token<"|"> <right:Expr_L2> => helper::gen_binop_call(state, "bitor", left, right),
+  <left:Expr_L3> Token<"++"> <right:Expr_L2> => helper::gen_binop_call(state, "concat", left, right),
 };
 
 Expr_L4: ast::Expr = Expr_Lx<ExprV_L4>;
