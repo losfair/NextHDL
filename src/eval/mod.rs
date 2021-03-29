@@ -641,9 +641,20 @@ impl EvalContext {
         condition,
         if_body,
         else_body,
+        is_static,
       } => {
         let condition = self.eval_expr(condition)?;
-        if let Some(x) = condition.const_truthy() {
+        let mut truthy = condition.const_truthy();
+        if truthy.is_none() && *is_static {
+          truthy = Some(
+            condition
+              .smt_truthy()?
+              .ok_or_else(|| EvalError::NonStaticStaticIf {
+                condition: condition.clone(),
+              })?,
+          );
+        }
+        if let Some(x) = truthy {
           if x {
             self.eval_body(if_body, Some(ctx))?;
           } else {

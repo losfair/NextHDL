@@ -122,11 +122,12 @@ Stmt: ast::Stmt = {
 
 StmtV: ast::StmtV = {
   Token<"let"> <def:GenericDef> Token<";"> => ast::StmtV::Let { def },
-  Token<"if"> <e:Expr> <if_body:Body> => ast::StmtV::IfElse { condition: e, if_body, else_body: None },
-  Token<"if"> <e:Expr> <if_body:Body> Token<"else"> <else_body:Body> => ast::StmtV::IfElse {
+  <is_static:Token<"static">?> Token<"if"> <e:Expr> <if_body:Body> => ast::StmtV::IfElse { condition: e, if_body, else_body: None, is_static: is_static.is_some() },
+  <is_static:Token<"static">?> Token<"if"> <e:Expr> <if_body:Body> Token<"else"> <else_body:Body> => ast::StmtV::IfElse {
     condition: e,
     if_body,
     else_body: Some(else_body),
+    is_static: is_static.is_some(),
   },
   <left:Expr> Token<"="> <right:Expr> Token<";"> => ast::StmtV::Assign { left, right },
   <e:Expr> Token<";"> => ast::StmtV::Expr { e },

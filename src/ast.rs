@@ -93,6 +93,7 @@ pub enum StmtV {
     condition: Expr,
     if_body: Body,
     else_body: Option<Body>,
+    is_static: bool,
   },
   Assign {
     left: Expr,

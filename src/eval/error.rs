@@ -99,6 +99,9 @@ pub enum EvalError {
   #[error("where arm cannot be statically evaluated: {condition:?}")]
   NonStaticWhereArm { condition: Arc<Value> },
 
+  #[error("static if cannot be statically evaluated: {condition:?}")]
+  NonStaticStaticIf { condition: Arc<Value> },
+
   #[error("type has no true value: {0:?}")]
   TypeHasNoTrueValue(Arc<Value>),
 
