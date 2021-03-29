@@ -244,7 +244,7 @@ Literal: ast::Literal = {
 };
 
 StringLit: Arc<str> = {
-  <s:Token<r#""(\\.|.)*""#>> =>? serde_json::from_str::<String>(s)
+  <s:Token<r#""(\\.|[^"])*""#>> =>? serde_json::from_str::<String>(s)
     .map(|x| state.get_string(&x))
     .map_err(|_| ParseError::User {
       error: LocalParseError::InvalidLiteral,
