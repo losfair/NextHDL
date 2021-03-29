@@ -44,3 +44,6 @@ jobs:
           /bin/time ./exe/concrete_execution ./test/concrete/mksignal.txt
           /bin/time ./exe/concrete_execution ./test/symbolic/commutativity.txt
           /bin/time ./exe/concrete_execution ./test/symbolic/associativity.txt
+          /bin/time ./exe/concrete_execution ./test/symbolic/if_else_simple.txt
+          /bin/time ./exe/concrete_execution ./test/symbolic/if_else_inference_1.txt
+          /bin/time ./exe/concrete_execution ./test/symbolic/x_logic.txt

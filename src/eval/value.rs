@@ -34,8 +34,8 @@ pub enum Value {
   /// A rank-0 signal value.
   SignalValue(SignalValue),
 
-  /// A rank-0 undefined value.
-  UndefinedValue,
+  /// A rank-0 unit value.
+  Unit,
 
   /// A rank-0 concrete `string` value.
   StringValue(Arc<str>),
@@ -69,6 +69,7 @@ pub enum Value {
 pub enum BuiltinFnValue {
   MkSignal,
   Error,
+  Undefined,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -372,7 +373,7 @@ impl Value {
       Value::BuiltinType(BuiltinType::Signal { .. }) => {
         Arc::new(Value::Unspecialized(UnspecializedType::Signal))
       }
-      Value::UndefinedValue => Arc::new(Value::UndefinedValue),
+      Value::Unit => Arc::new(Value::Unit),
       _ => {
         warn!("unknown type for value: {:?}", self);
         return Err(EvalError::GetTypeForValueOfUnknownType.into());

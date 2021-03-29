@@ -61,6 +61,10 @@ fn main() -> Result<()> {
     mk_arc_str("error"),
     Arc::new(Value::BuiltinFnValue(BuiltinFnValue::Error)),
   );
+  ctx.names.insert_mut(
+    mk_arc_str("undefined"),
+    Arc::new(Value::BuiltinFnValue(BuiltinFnValue::Undefined)),
+  );
 
   // First, insert types...
   for item in ast.items.iter() {

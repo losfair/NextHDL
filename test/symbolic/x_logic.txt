@@ -1,0 +1,9 @@
+fn entry() {
+  let a = undefined(uint<8>);
+  let b = undefined(uint<8>);
+  check<uint<8>>(a + b, b + a);
+}
+
+fn check<T: uint>(a: T, b: T)
+  where a == b {}
+  default { error("check failed"); }

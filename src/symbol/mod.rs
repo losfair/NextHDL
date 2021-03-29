@@ -2,6 +2,7 @@ mod smt;
 
 use anyhow::Result;
 use num_bigint::BigUint;
+use rand::Rng;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::convert::TryFrom;
@@ -348,15 +349,23 @@ impl UintSymbol {
       UintSymbolV::Concat(left, right) => left.bits + right.bits,
       UintSymbolV::Slice { high, low, .. } => *high - *low + 1,
     };
-    let serialized = bincode::serialize(&v).unwrap();
-    let mut hasher = Sha256::new();
-    hasher.update(&serialized);
-    let hash = hasher.finalize();
-    Arc::new(Self {
-      v,
-      bits,
-      hash: hash.into(),
-    })
+
+    let hashable = match v {
+      UintSymbolV::Undefined(_) => false,
+      _ => true,
+    };
+
+    let hash: [u8; 32] = if hashable {
+      let serialized = bincode::serialize(&v).unwrap();
+      let mut hasher = Sha256::new();
+      hasher.update(&serialized);
+      hasher.finalize().into()
+    } else {
+      let mut buf = [0u8; 32];
+      rand::thread_rng().fill(&mut buf);
+      buf
+    };
+    Arc::new(Self { v, bits, hash })
   }
 }
 
@@ -416,53 +425,37 @@ impl UintSymbolV {
         }
       }
       UintSymbolV::LogicAnd(left, right) => {
-        if left.hash == right.hash {
-          Some(UintSymbol::new(UintSymbolV::Resize {
-            from: left.clone(),
-            target_bits: 1,
-            signed: false,
-          }))
-        } else {
-          match (&left.v, &right.v) {
-            (UintSymbolV::Const(v, _), _) if u32::try_from(v) == Ok(0) => {
-              Some(UintSymbol::new(UintSymbolV::Const(0u32.into(), 1)))
-            }
-            (_, UintSymbolV::Const(v, _)) if u32::try_from(v) == Ok(0) => {
-              // TODO: short-circuiting?
-              Some(UintSymbol::new(UintSymbolV::Const(0u32.into(), 1)))
-            }
-            (UintSymbolV::Const(ll, _), UintSymbolV::Const(rr, _))
-              if u32::try_from(ll) != Ok(0) && u32::try_from(rr) != Ok(0) =>
-            {
-              Some(UintSymbol::new(UintSymbolV::Const(1u32.into(), 1)))
-            }
-            _ => None,
+        match (&left.v, &right.v) {
+          (UintSymbolV::Const(v, _), _) if u32::try_from(v) == Ok(0) => {
+            Some(UintSymbol::new(UintSymbolV::Const(0u32.into(), 1)))
           }
+          (_, UintSymbolV::Const(v, _)) if u32::try_from(v) == Ok(0) => {
+            // TODO: short-circuiting?
+            Some(UintSymbol::new(UintSymbolV::Const(0u32.into(), 1)))
+          }
+          (UintSymbolV::Const(ll, _), UintSymbolV::Const(rr, _))
+            if u32::try_from(ll) != Ok(0) && u32::try_from(rr) != Ok(0) =>
+          {
+            Some(UintSymbol::new(UintSymbolV::Const(1u32.into(), 1)))
+          }
+          _ => None,
         }
       }
       UintSymbolV::LogicOr(left, right) => {
-        if left.hash == right.hash {
-          Some(UintSymbol::new(UintSymbolV::Resize {
-            from: left.clone(),
-            target_bits: 1,
-            signed: false,
-          }))
-        } else {
-          match (&left.v, &right.v) {
-            (UintSymbolV::Const(v, _), _) if u32::try_from(v) == Ok(1) => {
-              Some(UintSymbol::new(UintSymbolV::Const(1u32.into(), 1)))
-            }
-            (_, UintSymbolV::Const(v, _)) if u32::try_from(v) == Ok(1) => {
-              // TODO: short-circuiting?
-              Some(UintSymbol::new(UintSymbolV::Const(1u32.into(), 1)))
-            }
-            (UintSymbolV::Const(ll, _), UintSymbolV::Const(rr, _))
-              if u32::try_from(ll) == Ok(0) && u32::try_from(rr) == Ok(0) =>
-            {
-              Some(UintSymbol::new(UintSymbolV::Const(0u32.into(), 1)))
-            }
-            _ => None,
+        match (&left.v, &right.v) {
+          (UintSymbolV::Const(v, _), _) if u32::try_from(v) == Ok(1) => {
+            Some(UintSymbol::new(UintSymbolV::Const(1u32.into(), 1)))
           }
+          (_, UintSymbolV::Const(v, _)) if u32::try_from(v) == Ok(1) => {
+            // TODO: short-circuiting?
+            Some(UintSymbol::new(UintSymbolV::Const(1u32.into(), 1)))
+          }
+          (UintSymbolV::Const(ll, _), UintSymbolV::Const(rr, _))
+            if u32::try_from(ll) == Ok(0) && u32::try_from(rr) == Ok(0) =>
+          {
+            Some(UintSymbol::new(UintSymbolV::Const(0u32.into(), 1)))
+          }
+          _ => None,
         }
       }
       UintSymbolV::Resize {

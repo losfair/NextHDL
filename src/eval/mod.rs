@@ -812,6 +812,15 @@ impl EvalContext {
           .try_to_string()?;
         Err(EvalError::UserError(msg).into())
       }
+      BuiltinFnValue::Undefined => {
+        let ty = args
+          .get(0)
+          .ok_or_else(|| EvalError::MissingArgument)?
+          .clone();
+        let signal = SymbolicUint::new_undefined(ty.rank1_width()?);
+        let value = Arc::new(Value::unpack(signal, &ty)?);
+        Ok(value)
+      }
     }
   }
 
@@ -905,7 +914,7 @@ impl EvalContext {
     // Run it!
     let retval = callee_ctx
       .eval_body(&selected_spec.body, None)?
-      .unwrap_or_else(|| Arc::new(Value::UndefinedValue));
+      .unwrap_or_else(|| Arc::new(Value::Unit));
     let actual_ret_type = retval.get_type()?;
 
     // Implicitly ignore the return type if nothing is expected
@@ -921,8 +930,7 @@ impl EvalContext {
       }
       return Ok(retval);
     } else {
-      // The "unit type".
-      return Ok(Arc::new(Value::UndefinedValue));
+      return Ok(Arc::new(Value::Unit));
     }
   }
 }
