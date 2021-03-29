@@ -14,8 +14,8 @@ use nexthdl::{
   ast::{ModuleDef, ModuleItem},
   eval::{
     value::{
-      BuiltinFnValue, SpecializedFnValue, UniqueProduct, UnspecializedFnValue, UnspecializedType,
-      Value,
+      BuiltinFnValue, BuiltinType, SpecializedFnValue, UniqueProduct, UnspecializedFnValue,
+      UnspecializedType, Value,
     },
     EvalContext,
   },
@@ -64,6 +64,10 @@ fn main() -> Result<()> {
   ctx.names.insert_mut(
     mk_arc_str("undefined"),
     Arc::new(Value::BuiltinFnValue(BuiltinFnValue::Undefined)),
+  );
+  ctx.names.insert_mut(
+    mk_arc_str("string"),
+    Arc::new(Value::BuiltinType(BuiltinType::String)),
   );
 
   // First, insert types...

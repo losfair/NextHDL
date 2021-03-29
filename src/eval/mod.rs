@@ -403,6 +403,7 @@ impl EvalContext {
       "len" => {
         let len = match &**base {
           Value::UintValue(v) => v.bits(),
+          Value::StringValue(x) => x.len() as u32,
           _ => return Err(EvalError::TypeMismatch.into()),
         };
         Value::UintValue(SymbolicUint::new_const(len.into(), 32))
