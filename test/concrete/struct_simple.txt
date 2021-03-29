@@ -1,0 +1,10 @@
+struct S<T: uint> {
+  a: T,
+  b: T,
+}
+
+fn entry() -> uint<8> {
+  let s = mksignal("in", S<uint<8>>);
+  let v = s.read();
+  v.a + v.b;
+}

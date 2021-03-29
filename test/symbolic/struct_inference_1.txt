@@ -1,0 +1,14 @@
+struct S<T: uint> {
+  a: T,
+  b: T,
+}
+
+fn entry() {
+  let s = mksignal("in", S<uint<8>>);
+  let v = s.read();
+  check<uint<8>>(v.a + v.b, v.b + v.a);
+}
+
+fn check<T: uint>(a: T, b: T)
+  where a == b {}
+  default { error("check failed"); }
