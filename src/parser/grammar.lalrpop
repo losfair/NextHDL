@@ -5,7 +5,7 @@ use crate::parser::grammar_helper as helper;
 use crate::parser::state::State;
 use std::sync::Arc;
 use crate::util::{ArcSliceExt, mk_arc_slice};
-use std::collections::BTreeMap;
+use indexmap::IndexMap;
 
 grammar(state: &mut State);
 
@@ -25,7 +25,7 @@ ModuleItem: ast::ModuleItem = {
 
 StructDef: ast::StructDef = {
   Token<"struct"> <name:Identifier> <tyargs:TyArgList?> Token<"{"> <fields:(<StructFieldDef> ",")*> <last_field:StructFieldDef?> Token<"}"> => {
-    let fields: BTreeMap<Arc<str>, ast::Expr> =
+    let fields: IndexMap<Arc<str>, ast::Expr> =
       fields.into_iter().chain(std::iter::once(last_field).filter_map(|x| x))
         .map(|x| (x.0.0, x.1))
         .collect();

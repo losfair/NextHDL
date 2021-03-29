@@ -3,6 +3,7 @@ pub mod signal;
 pub mod value;
 
 use error::EvalError;
+use indexmap::IndexMap;
 use value::*;
 
 use anyhow::Result;
@@ -240,7 +241,7 @@ impl EvalContext {
 
         self.compute_tyassigns(&mut specialization_context, tyassigns, &unique.def.tyargs)?;
 
-        let mut fields: BTreeMap<Arc<str>, Arc<Value>> = BTreeMap::new();
+        let mut fields: IndexMap<Arc<str>, Arc<Value>> = IndexMap::new();
         for (k, v) in unique.def.fields.iter() {
           let ty = specialization_context.eval_expr(v)?;
           fields.insert(k.clone(), ty);

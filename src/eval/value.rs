@@ -1,6 +1,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use arc_swap::ArcSwapWeak;
+use indexmap::IndexMap;
 
 use crate::{
   ast::{FnMeta, FnSpecialization, Identifier, StructDef},
@@ -203,7 +204,7 @@ impl Value {
               .expect("select: ProductValue: field mismatch");
             self.select(v_ll, v_rr).map(|x| (k.clone(), x))
           })
-          .collect::<Result<BTreeMap<_, _>>>()?;
+          .collect::<Result<IndexMap<_, _>>>()?;
         Ok(Arc::new(Value::ProductValue(ProductValue {
           fields,
           unique: ll.unique.clone(),
@@ -304,7 +305,7 @@ impl Value {
           .fields
           .iter()
           .map(|(k, v)| Self::do_unpack(source, v).map(|x| (k.clone(), Arc::new(x))))
-          .collect::<Result<BTreeMap<_, _>>>()?;
+          .collect::<Result<IndexMap<_, _>>>()?;
         Ok(Value::ProductValue(ProductValue {
           fields: value_map,
           unique: ty.unique.clone(),
@@ -351,7 +352,7 @@ impl Value {
       Value::UintValue(x) => Arc::new(Value::BuiltinType(BuiltinType::Uint { bits: x.bits() })),
       Value::StringValue(_) => Arc::new(Value::BuiltinType(BuiltinType::String)),
       Value::ProductValue(value) => {
-        let mut fields = BTreeMap::new();
+        let mut fields = IndexMap::new();
         for (k, v) in &value.fields {
           fields.insert(k.clone(), v.get_type()?);
         }
@@ -457,13 +458,13 @@ pub struct SpecializedFnArg {
 
 #[derive(Clone, Debug)]
 pub struct ProductValue {
-  pub fields: BTreeMap<Arc<str>, Arc<Value>>,
+  pub fields: IndexMap<Arc<str>, Arc<Value>>,
   pub unique: Arc<UniqueProduct>,
 }
 
 #[derive(Clone, Debug)]
 pub struct ProductType {
-  pub fields: BTreeMap<Arc<str>, Arc<Value>>,
+  pub fields: IndexMap<Arc<str>, Arc<Value>>,
   pub unique: Arc<UniqueProduct>,
 }
 
