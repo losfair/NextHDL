@@ -111,7 +111,7 @@ fn main() -> Result<()> {
   let ret = EvalContext::call_function(tracker, entry.clone(), &[], None);
   match ret {
     Ok(x) => {
-      println!("ret = {:?}", x);
+      println!("ret = {:#?}", x);
     }
     Err(e) => {
       println!("error = {:?}", e);

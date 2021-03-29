@@ -145,6 +145,7 @@ impl BuildSmtSymbol for UintSymbol {
         let v = BV::from_int(&v, *bits);
         Ok(v)
       }
+      UintSymbolV::Undefined(bits) => Ok(BV::fresh_const(&ctx.z3_ctx, "undefined_", *bits)),
       UintSymbolV::Add(left, right) => {
         let left = left.build(ctx)?;
         let right = right.build(ctx)?;

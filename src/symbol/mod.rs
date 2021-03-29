@@ -39,6 +39,10 @@ impl SymbolicUint {
     Self::new_v(UintSymbolV::External(x))
   }
 
+  pub fn new_undefined(bits: u32) -> Self {
+    Self::new_v(UintSymbolV::Undefined(bits))
+  }
+
   pub fn smt_solve_boolean(&self) -> Result<Option<bool>> {
     info!("Running SMT solver on SymbolicUint: {:?}", self);
     OwnedSmtBuildContext::current().solve_boolean(self)
@@ -128,6 +132,14 @@ impl SymbolicUint {
         low,
       }))
     }
+  }
+
+  pub fn sym_logic_not(self) -> SymbolicUint {
+    Self::new_v(UintSymbolV::Select {
+      predicate: self.sym,
+      on_true: Self::new_const(0u32.into(), 1).sym,
+      on_false: Self::new_const(1u32.into(), 1).sym,
+    })
   }
 
   pub fn bits(&self) -> u32 {
@@ -233,6 +245,9 @@ pub(self) enum UintSymbolV {
   /// A constant.
   Const(BigUint, u32),
 
+  /// An undefined value.
+  Undefined(u32),
+
   /// The result of adding two `UintSymbol`s.
   Add(Arc<UintSymbol>, Arc<UintSymbol>),
   Sub(Arc<UintSymbol>, Arc<UintSymbol>),
@@ -288,8 +303,18 @@ impl UintSymbol {
     }
 
     let bits = match &v {
-      UintSymbolV::External(x) => x.width(),
-      UintSymbolV::Const(_, bits) => *bits,
+      UintSymbolV::External(x) => {
+        assert!(x.width() > 0);
+        x.width()
+      }
+      UintSymbolV::Const(_, bits) => {
+        assert!(*bits > 0);
+        *bits
+      }
+      UintSymbolV::Undefined(bits) => {
+        assert!(*bits > 0);
+        *bits
+      }
       UintSymbolV::Add(left, _) => {
         // Right value will be truncated to match left
         left.bits
@@ -340,6 +365,7 @@ impl UintSymbolV {
     match self {
       UintSymbolV::External { .. } => None,
       UintSymbolV::Const(_, _) => None,
+      UintSymbolV::Undefined(_) => None,
       UintSymbolV::Add(left, right) => reduce_const_binop(left, right, |a, b| a + b),
       UintSymbolV::Sub(left, right) => reduce_const_binop(left, right, |a, b| a - b),
       UintSymbolV::Mul(left, right) => reduce_const_binop(left, right, |a, b| a * b),

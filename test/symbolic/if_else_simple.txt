@@ -1,0 +1,15 @@
+fn entry() -> uint<8> {
+  f1();
+}
+
+fn f1() -> uint<8> {
+  let a = mksignal("in", uint<8>);
+  let b = mksignal("in", uint<8>);
+  let result: uint<8>;
+  if a.read() {
+    result = b.read();
+  } else {
+    result = <uint<8>>42;
+  }
+  result;
+}

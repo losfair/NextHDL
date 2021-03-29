@@ -8,7 +8,11 @@ use value::*;
 use anyhow::Result;
 use arc_swap::ArcSwapWeak;
 use rpds::RedBlackTreeMapSync;
-use std::{collections::BTreeMap, fmt::Debug, sync::Arc};
+use std::{
+  collections::{BTreeMap, BTreeSet},
+  fmt::Debug,
+  sync::Arc,
+};
 
 use crate::{
   ast::Body,
@@ -32,12 +36,23 @@ pub struct EvalContext {
   pub names: RedBlackTreeMapSync<Arc<str>, Arc<Value>>,
 
   pub tracker: Arc<EvalTracker>,
+
+  constraints: Option<Arc<ConstraintStackEntry>>,
+}
+
+#[derive(Debug)]
+struct ConstraintStackEntry {
+  constraint: SymbolicUint,
+  link: Option<Arc<ConstraintStackEntry>>,
 }
 
 #[derive(Default)]
 pub struct BlockContext {
   /// A map from names of local variables to their types.
-  pub local_variable_types: BTreeMap<Identifier, Arc<Value>>,
+  pub local_variable_types: RedBlackTreeMapSync<Identifier, Arc<Value>>,
+
+  /// Non-propagating variables.
+  pub non_propagating_variables: BTreeSet<Identifier>,
 
   /// Updated variables in this block.
   pub updated_variables: BTreeMap<Identifier, Arc<Value>>,
@@ -46,12 +61,29 @@ pub struct BlockContext {
   pub last_result: Option<Arc<Value>>,
 }
 
+impl BlockContext {
+  /// Creates an "observer" BlockContext that absorbs all variable updates.
+  fn new_child(&self) -> Self {
+    Self {
+      local_variable_types: self.local_variable_types.clone(),
+      ..Default::default()
+    }
+  }
+}
+
 impl EvalContext {
   pub fn new() -> Self {
     Self {
       names: Default::default(),
       tracker: Arc::new(EvalTracker::new()),
+      constraints: None,
     }
+  }
+
+  pub fn unshare_evaluation_stack(&self) -> Self {
+    let mut this = self.clone();
+    this.tracker = Arc::new(this.tracker.unshare_evaluation_stack());
+    this
   }
 
   pub fn dump_stack(&self) -> Vec<EvaluationStackEntry> {
@@ -220,9 +252,7 @@ impl EvalContext {
       }
       UnspecializedType::Uint => {
         if tyassigns.len() == 0 {
-          Value::BuiltinType(BuiltinType::Uint {
-            bits: std::u32::MAX,
-          })
+          Value::BuiltinType(BuiltinType::Uint { bits: 32 })
         } else if tyassigns.len() == 1 && tyassigns[0].ty.is_none() {
           let width = self.eval_expr(&tyassigns[0].e)?;
           match &*width {
@@ -415,9 +445,10 @@ impl EvalContext {
     });
     let value = match &e.v {
       ExprV::Lit(x) => match x.v {
-        LiteralV::Uint(ref value) => {
-          Value::UintValue(SymbolicUint::new_const(value.clone(), std::u32::MAX))
-        }
+        LiteralV::Uint(ref value) => Value::UintValue(SymbolicUint::new_const(
+          value.clone(),
+          value.bits().max(32) as u32,
+        )),
         LiteralV::String(ref value) => Value::StringValue(value.clone()),
       },
       ExprV::Ident(x) => {
@@ -512,10 +543,14 @@ impl EvalContext {
         } else {
           actual_ty.ok_or_else(|| EvalError::MissingType)?
         };
-        ctx.local_variable_types.insert(def.name.clone(), ty);
+        ctx.local_variable_types.insert_mut(def.name.clone(), ty);
+        ctx.non_propagating_variables.insert(def.name.clone());
 
+        // Update value table
         if let Some(x) = init_value {
           self.names.insert_mut(def.name.0.clone(), x);
+        } else {
+          self.names.remove_mut(&def.name.0);
         }
       }
       StmtV::Assign { left, right } => {
@@ -525,24 +560,19 @@ impl EvalContext {
         let right_ty = right.get_type()?;
 
         // Get expected type
-        let expected_ty = if let Some(x) = ctx.local_variable_types.get(left) {
-          Some(x.clone())
-        } else if let Some(x) = self.names.get(&left.0) {
-          Some(x.get_type()?)
-        } else {
-          None
-        };
+        let expected_ty = ctx
+          .local_variable_types
+          .get(left)
+          .ok_or_else(|| EvalError::MissingLocalDecl)?;
 
         // Typeck
-        if let Some(expected_ty) = expected_ty {
-          if expected_ty != right_ty {
-            return Err(EvalError::TypeMismatch.into());
-          }
+        if *expected_ty != right_ty {
+          return Err(EvalError::TypeMismatch.into());
         }
 
         // Update state.
         self.names.insert_mut(left.0.clone(), right.clone());
-        if ctx.local_variable_types.get(left).is_none() {
+        if !ctx.non_propagating_variables.contains(left) {
           ctx.updated_variables.insert(left.clone(), right);
         }
       }
@@ -562,7 +592,141 @@ impl EvalContext {
           }
         } else {
           // Evaluate both & select
-          unimplemented!()
+          let condition = condition
+            .pack()?
+            .ok_or_else(|| EvalError::EmptyProductValueNotAllowed)?;
+
+          // "observer" contexts
+          let mut observer_on_true = ctx.new_child();
+          let mut observer_on_false = ctx.new_child();
+
+          let mut res_if = None;
+          let mut res_else = None;
+
+          // Unshare since we are going to send them to different threads
+          let mut this_if = self.unshare_evaluation_stack();
+          let mut this_else = self.unshare_evaluation_stack();
+
+          // Push constraints
+          this_if.constraints = Some(Arc::new(ConstraintStackEntry {
+            constraint: condition.clone(),
+            link: this_if.constraints.clone(),
+          }));
+          this_else.constraints = Some(Arc::new(ConstraintStackEntry {
+            constraint: condition.clone().sym_logic_not(),
+            link: this_else.constraints.clone(),
+          }));
+
+          info!("exploring both branches on condition: {:?}", condition);
+
+          rayon::scope(|s| {
+            s.spawn(|_| {
+              res_if = Some(
+                this_if
+                  .eval_body(if_body, Some(&mut observer_on_true))
+                  .map(|_| ()),
+              );
+            });
+
+            s.spawn(|_| {
+              if let Some(else_body) = else_body.as_ref() {
+                res_else = Some(
+                  this_else
+                    .eval_body(else_body, Some(&mut observer_on_false))
+                    .map(|_| ()),
+                );
+              } else {
+                res_else = Some(Ok(()));
+              }
+            });
+          });
+
+          // Check errors
+          if let Err(e) = res_if.unwrap() {
+            self.tracker.merge(&this_if.tracker);
+            return Err(e);
+          }
+
+          if let Err(e) = res_else.unwrap() {
+            self.tracker.merge(&this_else.tracker);
+            return Err(e);
+          }
+
+          let keys = observer_on_true
+            .updated_variables
+            .iter()
+            .map(|x| x.0.clone())
+            .chain(
+              observer_on_false
+                .updated_variables
+                .iter()
+                .map(|x| x.0.clone()),
+            )
+            .collect::<BTreeSet<_>>();
+
+          for k in keys {
+            let candidate_true = observer_on_true.updated_variables.get(&k);
+            let candidate_false = observer_on_false.updated_variables.get(&k);
+
+            let result = if let (Some(unpacked_tt), Some(unpacked_ff)) =
+              (candidate_true, candidate_false)
+            {
+              // If updated in both cases...
+
+              let ty = unpacked_tt.get_type()?;
+              assert_eq!(unpacked_ff.get_type()?, ty);
+              let tt = unpacked_tt.pack()?;
+              let ff = unpacked_ff.pack()?;
+              assert!(tt.is_some() == ff.is_some());
+
+              if tt.is_some() {
+                let tt = tt.unwrap();
+                let ff = ff.unwrap();
+                let result = condition.clone().sym_select(tt, ff);
+                Arc::new(Value::unpack(result, &ty)?)
+              } else {
+                unpacked_tt.clone()
+              }
+            } else {
+              // Otherwise only updated in one case.
+              let (condition, value, ty) = if let Some(unpacked_tt) = candidate_true {
+                (condition.clone(), unpacked_tt, unpacked_tt.get_type()?)
+              } else if let Some(unpacked_ff) = candidate_false {
+                (
+                  condition.clone().sym_logic_not(),
+                  unpacked_ff,
+                  unpacked_ff.get_type()?,
+                )
+              } else {
+                unreachable!()
+              };
+
+              match value.pack()? {
+                Some(value) => {
+                  // Compare with our current value.
+                  let already_here = self.names.get(&k.0)
+                    .map(|x| x.pack()
+                      .map(|x|
+                        x.expect("internal inconsistency: got non-zero-sized value but we currently have a zero-sized value")
+                      )
+                    ).transpose()?
+                    .unwrap_or_else(|| SymbolicUint::new_undefined(value.bits()));
+
+                  assert_eq!(already_here.bits(), value.bits());
+
+                  let target_value = condition.sym_select(value, already_here);
+                  Arc::new(Value::unpack(target_value, &ty)?)
+                }
+                None => {
+                  // Zero-sized value.
+                  // Already typeck-ed. Just insert and return.
+                  value.clone()
+                }
+              }
+            };
+
+            self.names.insert_mut(k.0, result);
+          }
         }
       }
       StmtV::Expr { e } => {
@@ -583,7 +747,10 @@ impl EvalContext {
       ty: EvaluationStackEntryType::Body,
       loc: Some((body.loc_start, body.loc_end)),
     });
-    let mut ctx = BlockContext::default();
+    let mut ctx = match parent_ctx.as_mut() {
+      Some(x) => x.new_child(),
+      None => BlockContext::default(),
+    };
     let mut this = self.clone();
     for stmt in body.body.iter() {
       this.eval_stmt(stmt, &mut ctx)?;
@@ -593,7 +760,7 @@ impl EvalContext {
 
       // Propagate update to parent context.
       if let Some(parent) = parent_ctx {
-        if parent.local_variable_types.get(&name).is_none() {
+        if !parent.non_propagating_variables.contains(&name) {
           parent.updated_variables.insert(name, value);
         }
         parent_ctx = Some(parent);

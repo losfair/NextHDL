@@ -1,0 +1,30 @@
+fn entry() {
+  let pred = mksignal("in", uint<8>);
+  let siga = mksignal("in", uint<8>);
+  let sigb = mksignal("in", uint<8>);
+  check<uint<8>>(f1(pred, siga, sigb) + f2(pred, siga, sigb), siga.read() + sigb.read());
+}
+
+fn check<T: uint>(a: T, b: T)
+  where a == b {}
+  default { error("check failed"); }
+
+fn f1(pred: signal<uint<8>>, siga: signal<uint<8>>, sigb: signal<uint<8>>) -> uint<8> {
+  let ret: uint<8>;
+  if pred.read() {
+    ret = sigb.read();
+  } else {
+    ret = siga.read();
+  }
+  ret;
+}
+
+fn f2(pred: signal<uint<8>>, siga: signal<uint<8>>, sigb: signal<uint<8>>) -> uint<8> {
+  let ret: uint<8>;
+  if pred.read() == 0 {
+    ret = sigb.read();
+  } else {
+    ret = siga.read();
+  }
+  ret;
+}

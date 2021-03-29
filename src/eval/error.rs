@@ -129,6 +129,12 @@ pub enum EvalError {
   #[error("unpack width mismatch: expected {expected} bits, got {actual} bits")]
   UnpackWidthMismatch { expected: u32, actual: u32 },
 
+  #[error("empty product value not allowed here")]
+  EmptyProductValueNotAllowed,
+
+  #[error("missing local variable declaration")]
+  MissingLocalDecl,
+
   #[error("user error: {0}")]
   UserError(Arc<str>),
 
