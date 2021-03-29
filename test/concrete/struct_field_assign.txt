@@ -1,0 +1,17 @@
+struct S<T: uint> {
+  a: T,
+  b: U<T>,
+}
+
+struct U<T: uint> {
+  value: T,
+}
+
+fn entry() {
+  let v = undefined(S<uint<8>>);
+  v.a = <uint<8>>2;
+  v.b.value = <uint<8>>3;
+  if v.a + v.b.value != 5 {
+    error("bad output");
+  }
+}

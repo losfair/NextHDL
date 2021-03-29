@@ -1,0 +1,18 @@
+struct S<T: uint> {
+  a: T,
+  b: U<T>,
+}
+
+struct U<T: uint> {
+  value: T,
+}
+
+fn entry() {
+  let sig = mksignal("in", uint<8>);
+  let v = undefined(S<uint<8>>);
+  v.a = <uint<8>>2;
+  v.b.value = sig.read();
+  static if v.a + v.b.value != v.b.value + v.a {
+    error("bad output");
+  }
+}
