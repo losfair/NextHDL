@@ -144,6 +144,12 @@ pub enum EvalError {
   #[error("cannot resolve identifier path segment")]
   IdentifierPathSegmentResolveFail,
 
+  #[error("slicing on non-uint value")]
+  SliceOnNonUint,
+
+  #[error("slice bounds must be uint")]
+  SliceBoundsMustBeUint,
+
   #[error("user error: {0}")]
   UserError(Arc<str>),
 

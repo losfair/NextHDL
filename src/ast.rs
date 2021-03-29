@@ -137,6 +137,11 @@ pub enum ExprV {
     args: Arc<[Expr]>,
   },
   Block(Arc<Block>),
+  Slice {
+    base: Arc<Expr>,
+    from: Arc<Expr>,
+    to: Arc<Expr>,
+  },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

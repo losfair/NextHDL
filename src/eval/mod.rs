@@ -389,6 +389,13 @@ impl EvalContext {
         let value = SymbolicUint::new_external(base.handle);
         Value::unpack(value, &base.inner_ty)?
       }
+      "len" => {
+        let len = match &**base {
+          Value::UintValue(v) => v.bits(),
+          _ => return Err(EvalError::TypeMismatch.into()),
+        };
+        Value::UintValue(SymbolicUint::new_const(len.into(), 32))
+      }
       _ => return Ok(None),
     };
     Ok(Some(Arc::new(value)))
@@ -519,6 +526,23 @@ impl EvalContext {
           }]),
           context: Arc::new(ArcSwapWeak::new(ctx)),
         })
+      }
+      ExprV::Slice { base, from, to } => {
+        let base = self.eval_expr(base)?;
+        let from = self.eval_expr(from)?;
+        let to = self.eval_expr(to)?;
+        let (from, to) = match (&*from, &*to) {
+          (Value::UintValue(from), Value::UintValue(to)) => {
+            let from = u32::try_from(from.as_const()?)?;
+            let to = u32::try_from(to.as_const()?)?;
+            (from, to)
+          }
+          _ => return Err(EvalError::SliceBoundsMustBeUint.into()),
+        };
+        match &*base {
+          Value::UintValue(base) => Value::UintValue(base.clone().sym_slice(from, to)?),
+          _ => return Err(EvalError::SliceOnNonUint.into()),
+        }
       }
     };
     Ok(Arc::new(value))

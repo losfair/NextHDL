@@ -162,6 +162,19 @@ Expr_L0: ast::Expr = Expr_Lx<ExprV_L0>;
 ExprV_L0: ast::ExprV = {
   <l:Literal> => ast::ExprV::Lit(l),
   <id:Identifier> => ast::ExprV::Ident(id),
+  <base:Expr_L0> Token<"["> <from:Expr> Token<"..="> <to:Expr> Token<"]"> => ast::ExprV::Slice {
+    base: Arc::new(base),
+    from: Arc::new(from),
+    to: Arc::new(to),
+  },
+  <base:Expr_L0> Token<"["> <at:Expr> Token<"]"> => {
+    let at = Arc::new(at);
+    ast::ExprV::Slice {
+      base: Arc::new(base),
+      from: at.clone(),
+      to: at.clone(),
+    }
+  },
   <base:Expr_L0> Token<"."> <id:Identifier> => ast::ExprV::Dot { base: Arc::new(base), id },
   <base:Expr_L0> <tyassigns:TypeAssignList> => ast::ExprV::Specialize { base: Arc::new(base), tyassigns },
   <base:Expr_L0> <args:ActualArgList<Expr>> => {
