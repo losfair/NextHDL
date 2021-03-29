@@ -95,7 +95,7 @@ pub enum StmtV {
     else_body: Option<Body>,
   },
   Assign {
-    left: Identifier,
+    left: Expr,
     right: Expr,
   },
   Expr {

@@ -122,6 +122,7 @@ fn main() -> Result<()> {
       let stack = ctx.dump_stack();
       let printer = source_loc_resolver.get_stack_dump_printer(&stack);
       println!("{}", printer);
+      std::process::exit(1);
     }
   }
 

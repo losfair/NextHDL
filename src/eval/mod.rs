@@ -523,6 +523,34 @@ impl EvalContext {
     Ok(Arc::new(value))
   }
 
+  fn rebuild_product_value(
+    ident_path: &mut Vec<&Identifier>,
+    v: &ProductValue,
+    right: Arc<Value>,
+  ) -> Result<Arc<Value>> {
+    let mut new_value = v.clone();
+    let id = ident_path
+      .pop()
+      .ok_or_else(|| EvalError::IdentifierPathSegmentResolveFail)?;
+    if let Some(x) = new_value.fields.get(&id.0) {
+      let x = match &**x {
+        Value::ProductValue(x) => Self::rebuild_product_value(ident_path, x, right)?,
+        _ => {
+          let prev_ty = x.get_type()?;
+          let right_ty = right.get_type()?;
+          if prev_ty != right_ty {
+            return Err(EvalError::TypeMismatch.into());
+          }
+          right
+        }
+      };
+      new_value.fields.insert(id.0.clone(), x);
+    } else {
+      return Err(EvalError::FieldNotFound.into());
+    }
+    Ok(Arc::new(Value::ProductValue(new_value)))
+  }
+
   pub fn eval_stmt(&mut self, stmt: &Stmt, ctx: &mut BlockContext) -> Result<()> {
     match &stmt.v {
       StmtV::Let { def } => {
@@ -556,24 +584,57 @@ impl EvalContext {
       StmtV::Assign { left, right } => {
         let right = self.eval_expr(right)?;
 
-        // Get actual type
-        let right_ty = right.get_type()?;
+        // Resolve identifier
+        let mut left = left;
+        let mut ident_path = vec![];
+        loop {
+          match &left.v {
+            ExprV::Dot { base, id } => {
+              ident_path.push(id);
+              left = &**base;
+            }
+            ExprV::Ident(x) => {
+              ident_path.push(x);
+              break;
+            }
+            _ => return Err(EvalError::InvalidAssignLeft.into()),
+          }
+        }
+
+        let top = ident_path.pop().unwrap();
+        let current_value = self.names.get(&top.0);
+
+        let new_value = if let Some(x) = current_value {
+          if let Value::ProductValue(v) = &**x {
+            Self::rebuild_product_value(&mut ident_path, v, right)?
+          } else {
+            right
+          }
+        } else {
+          right
+        };
+
+        // Ensure nothing is left
+        if !ident_path.is_empty() {
+          return Err(EvalError::IdentifierPathSegmentResolveFail.into());
+        }
 
         // Get expected type
         let expected_ty = ctx
           .local_variable_types
-          .get(left)
+          .get(top)
           .ok_or_else(|| EvalError::MissingLocalDecl)?;
 
+        let new_ty = new_value.get_type()?;
+
         // Typeck
-        if *expected_ty != right_ty {
+        if *expected_ty != new_ty {
           return Err(EvalError::TypeMismatch.into());
         }
 
-        // Update state.
-        self.names.insert_mut(left.0.clone(), right.clone());
-        if !ctx.non_propagating_variables.contains(left) {
-          ctx.updated_variables.insert(left.clone(), right);
+        self.names.insert_mut(top.0.clone(), new_value.clone());
+        if !ctx.non_propagating_variables.contains(top) {
+          ctx.updated_variables.insert(top.clone(), new_value);
         }
       }
       StmtV::IfElse {

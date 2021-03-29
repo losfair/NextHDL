@@ -128,7 +128,7 @@ StmtV: ast::StmtV = {
     if_body,
     else_body: Some(else_body),
   },
-  <left:Identifier> Token<"="> <right:Expr> Token<";"> => ast::StmtV::Assign { left, right },
+  <left:Expr> Token<"="> <right:Expr> Token<";"> => ast::StmtV::Assign { left, right },
   <e:Expr> Token<";"> => ast::StmtV::Expr { e },
   <mut e:Expr> <block_start:@L> <b:Block> <block_end:@R> Token<";">? => {
     let b = ast::Expr { v: ast::ExprV::Block(Arc::new(b)), loc_start: block_start, loc_end: block_end };

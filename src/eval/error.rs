@@ -135,6 +135,12 @@ pub enum EvalError {
   #[error("missing local variable declaration")]
   MissingLocalDecl,
 
+  #[error("invalid left side of assign statement")]
+  InvalidAssignLeft,
+
+  #[error("cannot resolve identifier path segment")]
+  IdentifierPathSegmentResolveFail,
+
   #[error("user error: {0}")]
   UserError(Arc<str>),
 
