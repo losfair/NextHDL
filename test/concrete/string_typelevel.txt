@@ -1,0 +1,10 @@
+fn entry() {
+  let len = generate<"hello" + " " + "world">();
+  if len != 11 {
+    error("bad string length");
+  }
+}
+
+fn generate<S: string>() -> uint<32> {
+  S.len();
+}

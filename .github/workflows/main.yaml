@@ -45,6 +45,7 @@ jobs:
           /bin/time ./exe/concrete_execution ./test/concrete/struct_simple.txt
           /bin/time ./exe/concrete_execution ./test/concrete/struct_field_assign.txt
           /bin/time ./exe/concrete_execution ./test/concrete/slicing_bits.txt
+          /bin/time ./exe/concrete_execution ./test/concrete/string_typelevel.txt
           /bin/time ./exe/concrete_execution ./test/symbolic/commutativity.txt
           /bin/time ./exe/concrete_execution ./test/symbolic/associativity.txt
           /bin/time ./exe/concrete_execution ./test/symbolic/if_else_simple.txt
