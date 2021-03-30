@@ -1,8 +1,16 @@
+use anyhow::Result;
 use parking_lot::{Mutex, RwLock};
 use serde::Serialize;
-use std::{fmt::Debug, sync::Arc};
+use std::{collections::BTreeMap, fmt::Debug, sync::Arc};
+use thiserror::Error;
 
 use crate::eval::EvalContext;
+
+#[derive(Error, Debug)]
+enum TrackerError {
+  #[error("signal width mismatch: name = {name}, prev = {prev}, new = {new}")]
+  SignalWidthMismatch { name: Arc<str>, prev: u32, new: u32 },
+}
 
 pub struct EvalTracker {
   evaluation_stack: Mutex<EvaluationStack>,
@@ -16,6 +24,7 @@ struct SharedEvalTracker {
 
 struct SignalTable {
   signals: Vec<SignalInfo>,
+  by_name: BTreeMap<Arc<str>, SignalHandle>,
 }
 
 pub struct SignalInfo {
@@ -68,7 +77,10 @@ impl EvalTracker {
         lazy_top: 0,
       }),
       shared: Arc::new(SharedEvalTracker {
-        signal_table: RwLock::new(SignalTable { signals: vec![] }),
+        signal_table: RwLock::new(SignalTable {
+          signals: vec![],
+          by_name: BTreeMap::new(),
+        }),
         context_registry: Mutex::new(vec![]),
       }),
     }
@@ -91,12 +103,36 @@ impl EvalTracker {
     ctx
   }
 
-  pub fn allocate_signal(&self, info: SignalInfo) -> SignalHandle {
+  pub fn allocate_signal(&self, info: SignalInfo) -> Result<SignalHandle> {
     let mut table = self.shared.signal_table.write();
+
+    if let Some(name) = &info.name {
+      if let Some(handle) = table.by_name.get(name) {
+        if handle.width != info.width {
+          return Err(
+            TrackerError::SignalWidthMismatch {
+              name: name.clone(),
+              prev: handle.width,
+              new: info.width,
+            }
+            .into(),
+          );
+        }
+        return Ok(handle.clone());
+      }
+    }
+
     let index = table.signals.len() as u32;
     let width = info.width;
+    let handle = SignalHandle { index, width };
+
+    if let Some(name) = &info.name {
+      table.by_name.insert(name.clone(), handle);
+    }
+
     table.signals.push(info);
-    SignalHandle { index, width }
+
+    Ok(handle)
   }
 
   pub fn enter(&self, entry: EvaluationStackEntry) -> EvalTrackerGuard {

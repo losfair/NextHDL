@@ -55,7 +55,7 @@ impl SignalValue {
     name: Option<Arc<str>>,
   ) -> Result<Self> {
     let width = inner_ty.rank1_width()?;
-    let handle = tracker.allocate_signal(SignalInfo { width, name });
+    let handle = tracker.allocate_signal(SignalInfo { width, name })?;
     Ok(Self {
       handle,
       inner_ty,
