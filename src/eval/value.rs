@@ -6,6 +6,7 @@ use indexmap::IndexMap;
 use crate::{
   ast::{FnMeta, FnSpecialization, Identifier, StructDef},
   symbol::SymbolicUint,
+  util::mk_arc_str,
 };
 
 use super::{error::EvalError, signal::SignalValue, EvalContext};
@@ -94,7 +95,11 @@ impl ValueOrdering {
 
 impl PartialEq for Value {
   fn eq(&self, other: &Self) -> bool {
-    self.compare_eq(other).const_truthy().unwrap_or(false)
+    self
+      .compare_eq(other)
+      .unwrap_or_else(|| false.into())
+      .const_truthy()
+      .unwrap_or(false)
   }
 }
 
@@ -102,11 +107,13 @@ impl PartialEq for Value {
 impl Eq for Value {}
 
 impl Value {
-  pub fn compare_eq(&self, other: &Value) -> SymbolicUint {
-    match (self, other) {
-      (Value::UintValue(ll), Value::UintValue(rr)) => ll.clone().sym_eq(rr.clone()),
+  pub fn compare_eq(&self, other: &Value) -> Option<SymbolicUint> {
+    Some(match (self, other) {
+      (Value::UintValue(ll), Value::UintValue(rr)) => {
+        return (ll.bits() == rr.bits()).then(|| ll.clone().sym_eq(rr.clone()))
+      }
       (Value::StringValue(ll), Value::StringValue(rr)) => (ll == rr).into(),
-      (Value::ProductValue(ll), Value::ProductValue(rr)) => ll.compare_eq(rr),
+      (Value::ProductValue(ll), Value::ProductValue(rr)) => return ll.compare_eq(rr),
       (Value::FnType(ll), Value::FnType(rr)) => (ll == rr).into(),
       (Value::ProductType(ll), Value::ProductType(rr)) => (ll == rr).into(),
       (Value::BuiltinType(ll), Value::BuiltinType(rr)) => (ll == rr).into(),
@@ -116,10 +123,10 @@ impl Value {
         }
         (UnspecializedType::Signal, UnspecializedType::Signal) => true.into(),
         (UnspecializedType::Uint, UnspecializedType::Uint) => true.into(),
-        _ => false.into(),
+        _ => return None,
       },
-      _ => false.into(),
-    }
+      _ => return None,
+    })
   }
 
   pub fn compare_ord(&self, other: &Value, ord: ValueOrdering) -> Option<SymbolicUint> {
@@ -167,6 +174,11 @@ impl Value {
     if !on_true
       .get_type()?
       .compare_eq(&*on_false.get_type()?)
+      .ok_or_else(|| EvalError::UncomparableTypes {
+        op: mk_arc_str("eq"),
+        left: on_true.clone(),
+        right: on_false.clone(),
+      })?
       .const_truthy()
       .unwrap_or(false)
     {
@@ -320,11 +332,11 @@ impl Value {
 }
 
 impl ProductValue {
-  fn compare_eq(&self, other: &ProductValue) -> SymbolicUint {
+  fn compare_eq(&self, other: &ProductValue) -> Option<SymbolicUint> {
     if !Arc::ptr_eq(&self.unique, &other.unique) {
-      return false.into();
+      return None;
     }
-    self
+    Some(self
       .fields
       .iter()
       .map(|(k, v)| {
@@ -336,12 +348,13 @@ impl ProductValue {
             .expect("ProductValue: Type eq but fields names are different"),
         )
       })
-      .map(|(l, r)| l.compare_eq(r))
+      .map(|(l, r)| l.compare_eq(r)
+        .expect("ProductValue::compare_eq: invariant violation: unique product eq but fields uncomparable"))
       .reduce(|prev, this| prev.sym_logic_and(this))
       .unwrap_or_else(|| {
         // With zero fields...
         SymbolicUint::new_const(1u32.into(), 1)
-      })
+      }))
   }
 }
 

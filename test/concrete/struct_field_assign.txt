@@ -11,7 +11,7 @@ fn entry() {
   let v = undefined(S<uint<8>>);
   v.a = <uint<8>>2;
   v.b.value = <uint<8>>3;
-  if v.a + v.b.value != 5 {
+  if v.a + v.b.value != <uint<8>>5 {
     error("bad output");
   }
 }

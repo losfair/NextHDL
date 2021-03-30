@@ -1,0 +1,8 @@
+fn entry() {
+  let a = mksignal("in", uint<8>, "sig1");
+  let b = mksignal("in", uint<8>, "sig1");
+
+  static if a.read() != b.read() {
+    error("fail");
+  }
+}

@@ -21,7 +21,7 @@ fn f1(pred: signal<uint<8>>, siga: signal<uint<8>>, sigb: signal<uint<8>>) -> ui
 
 fn f2(pred: signal<uint<8>>, siga: signal<uint<8>>, sigb: signal<uint<8>>) -> uint<8> {
   let ret: uint<8>;
-  if pred.read() == 0 {
+  if pred.read() == <uint<8>>0 {
     ret = sigb.read();
   } else {
     ret = siga.read();

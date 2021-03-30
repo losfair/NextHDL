@@ -297,7 +297,7 @@ impl EvalContext {
 
         let value = match &*id.0 {
           "eq" => base.compare_eq(&right),
-          "ne" => base.compare_eq(&right).sym_eq(false.into()),
+          "ne" => base.compare_eq(&right).map(|x| x.sym_eq(false.into())),
           _ => {
             let ord = match &*id.0 {
               "lt" => ValueOrdering::Lt,
@@ -306,19 +306,20 @@ impl EvalContext {
               "ge" => ValueOrdering::Ge,
               _ => unreachable!(),
             };
-            match base.compare_ord(&right, ord) {
-              Some(x) => x,
-              None => {
-                return Err(
-                  EvalError::UncomparableTypes {
-                    op: id.0.clone(),
-                    left: base.clone(),
-                    right,
-                  }
-                  .into(),
-                )
+            base.compare_ord(&right, ord)
+          }
+        };
+        let value = match value {
+          Some(x) => x,
+          None => {
+            return Err(
+              EvalError::UncomparableTypes {
+                op: id.0.clone(),
+                left: base.clone(),
+                right,
               }
-            }
+              .into(),
+            )
           }
         };
         Value::UintValue(value)
@@ -329,6 +330,7 @@ impl EvalContext {
         // TODO: short-circuiting semantics?
         let right = self.eval_expr(right)?;
 
+        // Allow different widths - no alignment needed.
         let result = match (&**base, &*right) {
           (Value::UintValue(ll), Value::UintValue(rr)) => match &*id.0 {
             "logicand" => ll.clone().sym_logic_and(rr.clone()),
@@ -342,8 +344,11 @@ impl EvalContext {
       "add" | "sub" | "mul" | "div" => {
         let right = args.get(0).ok_or_else(|| EvalError::MissingArgument)?;
         let right = self.eval_expr(right)?;
+
+        // Align widths.
         let base_ty = base.get_type()?;
         let right = base_ty.cast_to_this_type(&right)?;
+
         match (&**base, &*right) {
           (Value::StringValue(ll), Value::StringValue(rr)) => match &*id.0 {
             "add" => Value::StringValue(mk_arc_str(&format!("{}{}", ll, rr))),

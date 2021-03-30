@@ -198,12 +198,16 @@ impl BuildSmtSymbol for UintSymbol {
       }
       UintSymbolV::LogicAnd(left, right) => {
         let left = left.build(ctx)?;
-        let right = right.build(ctx)?.align_width_u(&left);
+
+        // No alignment needed
+        let right = right.build(ctx)?;
         Ok(left.bvredor().bvand(&right.bvredor()))
       }
       UintSymbolV::LogicOr(left, right) => {
         let left = left.build(ctx)?;
-        let right = right.build(ctx)?.align_width_u(&left);
+
+        // No alignment needed
+        let right = right.build(ctx)?;
         Ok(left.bvredor().bvor(&right.bvredor()))
       }
       UintSymbolV::Resize {
