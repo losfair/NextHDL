@@ -561,6 +561,39 @@ impl EvalContext {
           _ => return Err(EvalError::SliceOnNonUint.into()),
         }
       }
+      ExprV::NewStruct { ty, init_fields } => {
+        let ty = self.eval_expr(ty)?;
+        let product = match &*ty {
+          Value::ProductType(x) => x,
+          _ => return Err(EvalError::TypeMismatch.into()),
+        };
+
+        let mut value_fields: IndexMap<Arc<str>, Arc<Value>> = IndexMap::new();
+        let mut unused_fields = init_fields.iter().map(|x| &*x.0).collect::<BTreeSet<_>>();
+        for (k, expected_ty) in &product.fields {
+          let v = init_fields
+            .get(k)
+            .ok_or_else(|| EvalError::MissingField(k.clone()))?;
+          let v = self.eval_expr(v)?;
+          if v.get_type()? != *expected_ty {
+            return Err(EvalError::TypeMismatch.into());
+          }
+
+          value_fields.insert(k.clone(), v);
+          unused_fields.remove(&k);
+        }
+
+        if !unused_fields.is_empty() {
+          return Err(
+            EvalError::UnusedFields(unused_fields.iter().map(|x| (*x).clone()).collect()).into(),
+          );
+        }
+
+        Value::ProductValue(ProductValue {
+          unique: product.unique.clone(),
+          fields: value_fields,
+        })
+      }
     };
     Ok(Arc::new(value))
   }

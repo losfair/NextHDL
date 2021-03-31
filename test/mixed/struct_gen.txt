@@ -1,0 +1,31 @@
+struct S<N: uint<32>, F: fn (_: uint<32>) -> uint<32>> {
+  value_1: fn (_: uint<F(N)>) -> uint<32>,
+  value_2: fn (_: uint<F(N)>) -> uint<32>,
+}
+
+fn gen(n: uint<32>) -> uint<32> {
+  n / 2;
+}
+
+fn f1(x: uint<30>) -> uint<32> {
+  <uint<32>>x;
+}
+
+fn f2(x: uint<30>) -> uint<32> {
+  <uint<32>>x + 1;
+}
+
+fn entry() {
+  let x = new S<60, gen> {
+    value_1: f1,
+    value_2: f2
+  };
+  if x.value_1(<uint<30>>1) != 1 || x.value_2(<uint<30>>1) != 2 {
+    error("bad result");
+  }
+
+  let sig = mksignal("in", uint<30>);
+  static if x.value_1(sig.read()) != <uint<32>>sig.read() || x.value_2(sig.read()) != 1 + <uint<32>>sig.read() {
+    error("bad result");
+  }
+}

@@ -142,6 +142,10 @@ pub enum ExprV {
     from: Arc<Expr>,
     to: Arc<Expr>,
   },
+  NewStruct {
+    ty: Arc<Expr>,
+    init_fields: Arc<IndexMap<Arc<str>, Expr>>,
+  },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -54,3 +54,4 @@ jobs:
           /bin/time ./exe/concrete_execution ./test/symbolic/struct_inference_1.txt
           /bin/time ./exe/concrete_execution ./test/symbolic/struct_field_assign.txt
           /bin/time ./exe/concrete_execution ./test/symbolic/concat_slice.txt
+          /bin/time ./exe/concrete_execution ./test/mixed/struct_gen.txt

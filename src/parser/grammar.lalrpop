@@ -153,6 +153,14 @@ StmtV: ast::StmtV = {
   }
 }
 
+InitFieldEntry: (Arc<str>, ast::Expr) = {
+  <key:Identifier> Token<":"> <value:Expr> => (key.0, value),
+};
+
+InitFields: Arc<IndexMap<Arc<str>, ast::Expr>> = {
+  <fields:CommaRaw<InitFieldEntry>> => Arc::new(fields.into_iter().collect::<IndexMap<_, _>>()),
+};
+
 Expr_Lx<V>: ast::Expr = {
   <loc_start:@L> <v:V> <loc_end:@R> => ast::Expr { v, loc_start, loc_end }
 };
@@ -180,6 +188,7 @@ ExprV_L0: ast::ExprV = {
   <base:Expr_L0> <args:ActualArgList<Expr>> => {
     ast::ExprV::Call { base: Arc::new(base), args }
   },
+  Token<"new"> <ty:Expr> Token<"{"> <init_fields:InitFields> Token<"}"> => ast::ExprV::NewStruct { ty: Arc::new(ty), init_fields },
   Token<"("> <inner:ExprV> Token<")"> => inner,
   <b:Block> => ast::ExprV::Block(Arc::new(b)),
 };
@@ -259,6 +268,16 @@ Comma<T>: Arc<[T]> = {
   <v:(<T> Token<",">)*> <e:T?> => match e {
     None => mk_arc_slice(v.into_iter()),
     Some(e) => mk_arc_slice(v.into_iter().chain(std::iter::once(e))),
+  }
+};
+
+CommaRaw<T>: Vec<T> = { 
+  <mut v:(<T> Token<",">)*> <e:T?> => match e {
+    None => v,
+    Some(e) => {
+      v.extend(std::iter::once(e));
+      v
+    }
   }
 };
 

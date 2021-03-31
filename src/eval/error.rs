@@ -150,6 +150,12 @@ pub enum EvalError {
   #[error("slice bounds must be uint")]
   SliceBoundsMustBeUint,
 
+  #[error("missing field: {0}")]
+  MissingField(Arc<str>),
+
+  #[error("unused fields: {0:?}")]
+  UnusedFields(Vec<Arc<str>>),
+
   #[error("user error: {0}")]
   UserError(Arc<str>),
 
